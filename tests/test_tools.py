@@ -1,3 +1,5 @@
+import shutil
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -56,6 +58,54 @@ class ToolRegistryTests(unittest.TestCase):
 
         self.assertTrue(result.ok)
         self.assertNotEqual(result.metadata["before_hash"], result.metadata["after_hash"])
+
+    def test_apply_patch_updates_file_and_records_hashes(self) -> None:
+        path = self.root / "a.txt"
+        path.write_text("first\nsecond\nthird\n", encoding="utf-8")
+
+        result = self.registry.execute(
+            "apply_patch",
+            {
+                "path": "a.txt",
+                "patch": "@@ -1,3 +1,4 @@\n first\n-second\n+changed\n third\n+fourth",
+            },
+        )
+
+        self.assertTrue(result.ok)
+        self.assertEqual(path.read_text(encoding="utf-8"), "first\nchanged\nthird\nfourth\n")
+        self.assertNotEqual(result.metadata["before_hash"], result.metadata["after_hash"])
+
+    def test_apply_patch_rejects_stale_context_without_modifying_file(self) -> None:
+        path = self.root / "a.txt"
+        path.write_text("current\n", encoding="utf-8")
+
+        result = self.registry.execute(
+            "apply_patch",
+            {"path": "a.txt", "patch": "@@ -1 +1 @@\n-old\n+new"},
+        )
+
+        self.assertFalse(result.ok)
+        self.assertIn("context does not match", result.content)
+        self.assertEqual(path.read_text(encoding="utf-8"), "current\n")
+
+    @unittest.skipUnless(shutil.which("git"), "git is required")
+    def test_show_diff_reports_tracked_and_untracked_changes(self) -> None:
+        subprocess.run(["git", "init", "-q"], cwd=self.root, check=True)
+        subprocess.run(["git", "config", "user.name", "Test"], cwd=self.root, check=True)
+        subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=self.root, check=True)
+        (self.root / "a.txt").write_text("before\n", encoding="utf-8")
+        subprocess.run(["git", "add", "a.txt"], cwd=self.root, check=True)
+        subprocess.run(["git", "commit", "-q", "-m", "initial"], cwd=self.root, check=True)
+        (self.root / "a.txt").write_text("after\n", encoding="utf-8")
+        subprocess.run(["git", "add", "a.txt"], cwd=self.root, check=True)
+        (self.root / "new.txt").write_text("new\n", encoding="utf-8")
+
+        result = self.registry.execute("show_diff", {})
+
+        self.assertTrue(result.ok)
+        self.assertIn("-before", result.content)
+        self.assertIn("+after", result.content)
+        self.assertIn("?? new.txt", result.content)
 
     def test_run_command_captures_exit_code(self) -> None:
         result = self.registry.execute(

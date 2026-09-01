@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from proofcode.errors import ApprovalDenied, PathViolation, ToolError
+from proofcode.patching import apply_unified_hunks
 from proofcode.state import WorkspaceState
 from proofcode.types import ToolResult
 
@@ -168,6 +169,22 @@ class ToolRegistry:
                 ),
                 self._create_file,
                 requires_approval=True,
+            ),
+            Tool(
+                "apply_patch",
+                "Apply standard unified-diff hunks to one existing UTF-8 file. Pass the target path separately and omit file headers.",
+                self._object_schema(
+                    {"path": {"type": "string"}, "patch": {"type": "string"}},
+                    ["path", "patch"],
+                ),
+                self._apply_patch,
+                requires_approval=True,
+            ),
+            Tool(
+                "show_diff",
+                "Show uncommitted Git changes for the workspace or one path without modifying files.",
+                self._object_schema({"path": {"type": "string"}}, []),
+                self._show_diff,
             ),
             Tool(
                 "run_command",
@@ -342,6 +359,78 @@ class ToolRegistry:
                 "path": args["path"],
                 "after_hash": self._file_hash(path),
             },
+        )
+
+    def _apply_patch(self, args: dict[str, Any]) -> ToolResult:
+        path = self.workspace.resolve(args["path"], must_exist=True)
+        if not path.is_file():
+            raise ToolError(f"not a file: {args['path']}")
+        if path.stat().st_size > 2_000_000:
+            raise ToolError("apply_patch does not accept files larger than 2 MB")
+        content = path.read_text(encoding="utf-8")
+        before_hash = self._file_hash(path)
+        updated = apply_unified_hunks(content, args["patch"])
+        if updated == content:
+            raise ToolError("patch does not change the file")
+        path.write_text(updated, encoding="utf-8", newline="")
+        return ToolResult(
+            True,
+            f"patched {args['path']}",
+            {
+                "changed": True,
+                "path": args["path"],
+                "before_hash": before_hash,
+                "after_hash": self._file_hash(path),
+            },
+        )
+
+    def _show_diff(self, args: dict[str, Any]) -> ToolResult:
+        requested = args.get("path")
+        relative = None
+        if requested is not None:
+            path = self.workspace.resolve(requested, must_exist=True)
+            relative = self.workspace.relative(path)
+        command = ["git", "diff", "--no-ext-diff", "--no-color", "HEAD", "--"]
+        if relative is not None:
+            command.append(relative)
+        completed = subprocess.run(
+            command,
+            cwd=self.workspace.root,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=min(30, self.command_timeout),
+            shell=False,
+        )
+        if completed.returncode != 0:
+            detail = completed.stderr.strip() or completed.stdout.strip()
+            raise ToolError(f"git diff failed: {detail}")
+        status_command = ["git", "status", "--short", "--untracked-files=normal"]
+        if relative is not None:
+            status_command.extend(["--", relative])
+        status = subprocess.run(
+            status_command,
+            cwd=self.workspace.root,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=min(30, self.command_timeout),
+            shell=False,
+        )
+        if status.returncode != 0:
+            raise ToolError(f"git status failed: {status.stderr.strip()}")
+        diff = completed.stdout.strip()
+        untracked = [line for line in status.stdout.splitlines() if line.startswith("?? ")]
+        sections = [diff] if diff else []
+        if untracked:
+            sections.append("Untracked files:\n" + "\n".join(untracked))
+        content = "\n\n".join(sections) or "no uncommitted changes"
+        return ToolResult(
+            True,
+            content,
+            {"path": relative or ".", "untracked": len(untracked)},
         )
 
     def _run_command(self, args: dict[str, Any]) -> ToolResult:
