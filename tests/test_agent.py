@@ -45,7 +45,7 @@ class ScriptedModel:
 
 
 class CodingAgentTests(unittest.TestCase):
-    def test_changed_file_requires_relevant_validation_before_completion(self) -> None:
+    def test_changed_file_requires_project_validation_before_completion(self) -> None:
         with tempfile.TemporaryDirectory(dir=Path(__file__).parent) as directory:
             root = Path(directory)
             (root / "value.txt").write_text("old", encoding="utf-8")
@@ -132,7 +132,7 @@ class CodingAgentTests(unittest.TestCase):
 
             self.assertEqual(result.reason, StopReason.COMPLETED)
             self.assertEqual(result.steps, 6)
-            self.assertIn("relevant test or check still fails", str(model.seen_messages[3]))
+            self.assertIn("recorded test or check still fails", str(model.seen_messages[3]))
 
     def test_stops_repeated_identical_action(self) -> None:
         with tempfile.TemporaryDirectory(dir=Path(__file__).parent) as directory:

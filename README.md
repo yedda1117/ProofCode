@@ -4,14 +4,14 @@
   <br/>
 
   <a href="#-quick-start"><img src="https://img.shields.io/badge/Python-3.11+-3776AB?style=for-the-badge&logo=python&logoColor=white" alt="Python 3.11+" /></a>
-  <a href="#-testing--evaluation"><img src="https://img.shields.io/badge/Tests-41%20Passing-22C55E?style=for-the-badge&logo=pytest&logoColor=white" alt="41 tests passing" /></a>
+  <a href="#-testing--evaluation"><img src="https://img.shields.io/badge/Tests-46%20Passing-22C55E?style=for-the-badge&logo=pytest&logoColor=white" alt="46 tests passing" /></a>
   <a href="#-design-principles"><img src="https://img.shields.io/badge/Agent_Framework-None-8B5CF6?style=for-the-badge" alt="No agent framework" /></a>
   <a href="#-quick-start"><img src="https://img.shields.io/badge/Runtime_Dependencies-0-14B8A6?style=for-the-badge" alt="Zero runtime dependencies" /></a>
 
   <br/><br/>
 
   <strong>一个轻量、可审计、由执行证据驱动的编程智能体。</strong><br/>
-  <sub>不把“模型说完成了”当作完成。代码变更后，必须用当前工作区版本的测试 / 构建 / 静态检查结果证明它。</sub>
+  <sub>不把“模型说完成了”当作完成。工作区发生可观测变化后，必须取得当前 revision 的项目级执行证据。</sub>
 
   <br/><br/>
 
@@ -26,7 +26,7 @@
 <br/>
 
 > [!NOTE]
-> **ProofCode 的核心约束：** `Model completion ≠ Task completion`。只要代码发生变化，旧验证立即失效；只有当前 revision 获得相关执行证据后，Agent 才能真正结束任务。
+> **ProofCode 的核心约束：** `Model completion ≠ Task completion`。工作区发生可观测变化后，旧验证立即失效；只有当前 revision 获得项目级执行证据后，Runtime 才接受完成声明。
 
 ## ✦ Why ProofCode
 
@@ -40,7 +40,7 @@ ProofCode 把 **模型决策** 与 **程序完成条件** 分离，并围绕两�
 
 ### 🛡️ Evidence-gated completion
 
-代码一旦变化，workspace revision 自动推进。旧测试、旧构建和旧静态检查结果随即失效；如果当前版本没有新的有效验证，ProofCode 会拒绝模型结束任务，并把缺失证据重新反馈给下一轮。
+受控编辑或命令引起文件变化时，workspace revision 自动推进。旧测试、旧构建和旧静态检查结果随即失效；如果当前版本没有新的项目级 validation，ProofCode 会拒绝模型结束任务，并把缺失证据重新反馈给下一轮。
 
 </td>
 <td width="50%" valign="top">
@@ -70,7 +70,7 @@ flowchart LR
     E --> W["L2 · Working Summary"]:::context
     W --> I["L1 · Compact Index"]:::context
     I --> M
-    T -->|edit| R["Revision +1"]:::gate
+    T -->|observed change| R["Revision +1"]:::gate
     R --> X["Invalidate stale evidence"]:::gate
     X --> M
     T -->|test / build / lint| V{"Current revision verified?"}:::gate
@@ -91,8 +91,8 @@ flowchart LR
 |:--:|---|---|
 | 🔁 | **Native Agent Loop** | 直接解析 OpenAI-compatible Chat Completions API 的原生 tool calls，并将结构化结果反馈给模型 |
 | 🧠 | **3-Layer Context** | L1 紧凑索引、L2 工作摘要、L3 可按需恢复的完整工具证据 |
-| 🧬 | **Revision Awareness** | 每次成功编辑推进 workspace revision，相关旧上下文与验证自动标记 stale |
-| ✅ | **Reliable Completion** | 修改代码后没有当前版本的有效测试 / 构建 / 静态检查证据，就拒绝完成 |
+| 🧬 | **Revision Awareness** | 成功编辑或命令引起的可观测文件变化推进 revision，旧命令与验证自动标记 stale |
+| ✅ | **Evidence Gate** | 普通成功命令和单个 focused test 不足以结束；需要当前 revision 的项目级 validation |
 | ✍️ | **Controlled Editing** | 支持唯一文本替换、新文件创建、单文件 unified-diff patch |
 | 🔍 | **Diff Review** | 查看相对 Git `HEAD` 的 staged、unstaged 与 untracked 状态 |
 | 🖥️ | **Local Execution** | `subprocess.run(..., shell=False)`；限制工作目录、超时与输出长度 |
@@ -185,19 +185,29 @@ L1  CONTEXT INDEX
         complete tool output, recoverable by ID + offset via read_context
 ```
 
-当文件发生修改后，与旧内容相关的读取、搜索、命令和验证条目会被标记为 `stale`。模型仍可审计历史证据，但不能把旧版本的成功测试当成当前版本的完成依据。
+当文件发生修改后，与旧内容相关的读取、搜索、命令和验证条目会被标记为 `stale`。`run_command` 前后也会比较工作区文件元数据，以捕获格式化器、生成器等命令带来的变化。模型仍可审计历史证据，但不能把旧版本的成功测试当成当前版本的完成依据。当前采用 workspace-level 保守失效：即使只修改 README，也会使旧验证失效。
 
 ## ✓ Completion Gate
 
 <table>
 <tr><th>Workspace state</th><th>ProofCode decision</th></tr>
-<tr><td>没有修改代码</td><td>🟦 可以直接报告分析结果</td></tr>
-<tr><td>修改代码，但没有相关验证</td><td>🟨 <b>拒绝完成</b>，继续 Agent loop</td></tr>
-<tr><td>当前 revision 仍有失败测试</td><td>🟥 <b>拒绝完成</b>，把失败证据反馈给模型</td></tr>
-<tr><td>当前 revision 的测试 / 构建 / 静态检查通过</td><td>🟩 <b>接受完成</b></td></tr>
+<tr><td>尚未取得任何 workspace evidence</td><td>🟨 <b>拒绝完成</b>，要求先检查项目</td></tr>
+<tr><td>检查后没有观测到工作区变化</td><td>🟦 可以报告分析结果</td></tr>
+<tr><td>修改后仅有普通命令或 focused validation</td><td>🟨 <b>拒绝完成</b>，继续 Agent loop</td></tr>
+<tr><td>当前 revision 仍有失败 validation</td><td>🟥 <b>拒绝完成</b>，把失败证据反馈给模型</td></tr>
+<tr><td>当前 revision 的项目级 validation 通过</td><td>🟩 <b>接受完成声明</b></td></tr>
 </table>
 
-验证命令由本地确定性规则识别，覆盖常见的 **Python / Node.js / Go / Rust / .NET / Maven / Gradle / Make** 工作流。测试通过代表执行证据，并不等价于对用户需求的形式化证明。
+验证命令由本地确定性规则识别，覆盖常见的 **Python / Node.js / Go / Rust / .NET / Maven / Gradle / Make** 工作流。显式指定测试文件、用例或单文件检查的命令标记为 `focused`；它们可以提供快速反馈，但完成还需要项目级 baseline。因此，修改 `auth.py` 后只运行 `pytest tests/test_math.py` 不会通过完成门控。
+
+这里的 project-wide 是命令范围上的确定性近似，不是语义相关性或测试完备性的证明。当前系统没有建立 changed-file dependency、coverage 或 test-impact mapping；validation selection 仍由 Agent 提议，Runtime 负责真实执行、范围分类、版本绑定和完成门控。因此它是 evidence executor 和 gatekeeper，不是独立的 correctness verifier：
+
+```text
+完成被接受  ⇒ 当前可观测 revision 存在项目级可执行证据
+完成被接受  ⇏ 用户需求已被形式化证明
+```
+
+当前 gate 是 observed-change-triggered，并不理解完整任务意图。进一步可以引入显式 `analysis` / `modification` 任务契约，以及由 Runtime 选择的固定 baseline 和 test-impact mapping。
 
 ## 🧾 Auditable Trajectory
 
@@ -234,7 +244,7 @@ python -m unittest discover -v
 ```
 
 ```text
-Ran 41 tests
+Ran 46 tests
 OK
 ```
 
@@ -269,6 +279,7 @@ proofcode/
 
 tests/                # 单元测试与脚本化 Agent 流程
 evaluation/           # 上下文回放评估
+demo/                 # 可重复录制的人工确认、三层上下文与验证门控案例
 ```
 
 ## ◆ Design Principles

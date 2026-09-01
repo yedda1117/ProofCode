@@ -5,6 +5,17 @@ from proofcode.types import ToolCall, ToolResult
 
 
 class WorkspaceStateTests(unittest.TestCase):
+    def test_completion_requires_workspace_evidence(self) -> None:
+        state = WorkspaceState("Fix a.py")
+
+        self.assertIn("no workspace evidence", state.completion_feedback())
+
+        state.record(
+            ToolCall("call-1", "read_file", {"path": "a.py"}),
+            ToolResult(True, "source", {"path": "a.py"}),
+        )
+        self.assertIsNone(state.completion_feedback())
+
     def test_records_evidence_with_stable_ids(self) -> None:
         state = WorkspaceState()
 
@@ -163,13 +174,46 @@ class WorkspaceStateTests(unittest.TestCase):
         self.assertIsNone(state.completion_feedback())
         self.assertIn("validation_status: passed", state.index())
 
+    def test_focused_test_alone_does_not_allow_completion(self) -> None:
+        state = WorkspaceState("Change auth.py")
+        state.record(
+            ToolCall("call-1", "replace_text", {"path": "auth.py"}),
+            ToolResult(True, "updated", {"changed": True, "path": "auth.py"}),
+        )
+        state.record(
+            ToolCall("call-2", "run_command", {"argv": ["pytest", "tests/test_math.py"]}),
+            ToolResult(True, "passed", {"exit_code": 0}),
+        )
+
+        self.assertEqual(state.validation_status(), "focused_only")
+        self.assertIn("project-wide baseline", state.completion_feedback())
+
+    def test_command_workspace_change_invalidates_previous_validation(self) -> None:
+        state = WorkspaceState("Change generated.py")
+        state.record(
+            ToolCall("call-1", "replace_text", {"path": "a.py"}),
+            ToolResult(True, "updated", {"changed": True, "path": "a.py"}),
+        )
+        state.record(
+            ToolCall("call-2", "run_command", {"argv": ["pytest"]}),
+            ToolResult(True, "passed", {"exit_code": 0}),
+        )
+        state.record(
+            ToolCall("call-3", "run_command", {"argv": ["generator"]}),
+            ToolResult(True, "generated", {"exit_code": 0, "workspace_changes": ["generated.py"]}),
+        )
+
+        self.assertEqual(state.revision, 2)
+        self.assertIn("generated.py", state.changed_files)
+        self.assertEqual(state.validation_status(), "missing")
+
     def test_failed_validation_must_be_resolved(self) -> None:
         state = WorkspaceState("Change a.py")
         state.record(
             ToolCall("call-1", "replace_text", {"path": "a.py"}),
             ToolResult(True, "updated", {"changed": True, "path": "a.py"}),
         )
-        command = ["python", "-m", "unittest", "tests.test_a"]
+        command = ["python", "-m", "unittest", "discover"]
         state.record(
             ToolCall("call-2", "run_command", {"argv": command}),
             ToolResult(False, "FAILED", {"exit_code": 1}),

@@ -443,6 +443,7 @@ class ToolRegistry:
         if not cwd.is_dir():
             raise ToolError("cwd must be a directory")
         timeout = self._bounded_int(args.get("timeout", self.command_timeout), 1, self.command_timeout, "timeout")
+        before_workspace = self._workspace_snapshot()
         started = time.monotonic()
         try:
             completed = subprocess.run(
@@ -457,20 +458,66 @@ class ToolRegistry:
             )
         except subprocess.TimeoutExpired as exc:
             output = ((exc.stdout or "") + "\n" + (exc.stderr or "")).strip()
+            after_workspace = self._workspace_snapshot()
+            workspace_changes = sorted(
+                path
+                for path in set(before_workspace) | set(after_workspace)
+                if before_workspace.get(path) != after_workspace.get(path)
+            )
             return ToolResult(
                 False,
                 f"command timed out after {timeout}s\n{output}",
-                {"category": "timeout", "timeout": timeout},
+                {
+                    "category": "timeout",
+                    "timeout": timeout,
+                    "workspace_changes": workspace_changes,
+                },
             )
         elapsed = round(time.monotonic() - started, 3)
         output = "\n".join(
             part for part in (completed.stdout.strip(), completed.stderr.strip()) if part
         ) or "[no output]"
+        after_workspace = self._workspace_snapshot()
+        workspace_changes = sorted(
+            path
+            for path in set(before_workspace) | set(after_workspace)
+            if before_workspace.get(path) != after_workspace.get(path)
+        )
         return ToolResult(
             completed.returncode == 0,
             f"exit_code={completed.returncode}\nduration={elapsed}s\n{output}",
-            {"exit_code": completed.returncode, "duration": elapsed},
+            {
+                "exit_code": completed.returncode,
+                "duration": elapsed,
+                "workspace_changes": workspace_changes,
+            },
         )
+
+    def _workspace_snapshot(self) -> dict[str, tuple[int, int]]:
+        ignored_parts = {
+            ".git",
+            ".proofcode",
+            "__pycache__",
+            ".pytest_cache",
+            ".mypy_cache",
+            ".ruff_cache",
+            ".tox",
+            ".venv",
+            "venv",
+            "node_modules",
+            "target",
+        }
+        snapshot: dict[str, tuple[int, int]] = {}
+        for path in self.workspace.root.rglob("*"):
+            relative = path.relative_to(self.workspace.root)
+            if any(part in ignored_parts for part in relative.parts) or not path.is_file():
+                continue
+            try:
+                stat = path.stat()
+            except (FileNotFoundError, PermissionError):
+                continue
+            snapshot[relative.as_posix()] = (stat.st_size, stat.st_mtime_ns)
+        return snapshot
 
     def _list_context(self, _args: dict[str, Any]) -> ToolResult:
         if self.state is None:

@@ -1,9 +1,38 @@
 import unittest
 
-from proofcode.validation import classify_validation
+from proofcode.validation import classify_validation, validation_scope
 
 
 class ValidationClassificationTests(unittest.TestCase):
+    def test_distinguishes_project_and_focused_tests(self) -> None:
+        self.assertEqual(validation_scope(["pytest", "-q"]), "project")
+        self.assertEqual(validation_scope(["pytest", "tests/test_math.py"]), "focused")
+        self.assertEqual(validation_scope(["pytest", "-k", "math"]), "focused")
+        self.assertEqual(validation_scope(["npm", "test"]), "project")
+        self.assertEqual(validation_scope(["npm", "test", "--", "test_math"]), "focused")
+        self.assertEqual(validation_scope(["go", "test", "./..."]), "project")
+        self.assertEqual(validation_scope(["go", "test", "./auth"]), "focused")
+        self.assertEqual(validation_scope(["cargo", "test"]), "project")
+        self.assertEqual(validation_scope(["cargo", "test", "auth_test"]), "focused")
+        self.assertEqual(validation_scope(["python", "-m", "compileall", "."]), "project")
+        self.assertEqual(
+            validation_scope(["python", "-m", "py_compile", "auth.py"]), "focused"
+        )
+        self.assertEqual(validation_scope(["python", "-m", "ruff", "check", "."]), "project")
+        self.assertEqual(
+            validation_scope(["python", "-m", "ruff", "check", "auth.py"]), "focused"
+        )
+        self.assertEqual(validation_scope(["npm", "run", "lint"]), "project")
+        self.assertEqual(
+            validation_scope(["npm", "run", "lint", "--", "auth.js"]), "focused"
+        )
+        self.assertEqual(
+            validation_scope(["python", "-m", "unittest", "discover"]), "project"
+        )
+        self.assertEqual(
+            validation_scope(["python", "-m", "unittest", "tests.test_math"]), "focused"
+        )
+
     def test_recognizes_common_test_commands(self) -> None:
         commands = [
             ["python", "-m", "unittest", "discover"],

@@ -5,7 +5,7 @@ import json
 from typing import Any
 
 from proofcode.types import ToolCall, ToolResult
-from proofcode.validation import classify_validation
+from proofcode.validation import classify_validation, validation_scope
 
 
 @dataclass(frozen=True)
@@ -39,6 +39,7 @@ class ValidationRecord:
     ok: bool
     evidence_id: str
     revision: int
+    scope: str = "project"
     stale: bool = False
 
 
@@ -66,17 +67,28 @@ class WorkspaceState:
     def record(self, call: ToolCall, result: ToolResult) -> ToolResult:
         metadata = dict(result.metadata)
         path = metadata.get("path")
-        if result.ok and metadata.get("changed") and isinstance(path, str):
+        command_changes = metadata.get("workspace_changes", [])
+        changed_paths = (
+            [path]
+            if result.ok and metadata.get("changed") and isinstance(path, str)
+            else [item for item in command_changes if isinstance(item, str)]
+        )
+        if changed_paths:
             self.revision += 1
-            self.changed_files.add(path)
-            self._invalidate_for_change(path)
+            for changed_path in changed_paths:
+                self.changed_files.add(changed_path)
+                self._invalidate_for_change(changed_path)
 
         evidence_id = f"E{len(self._records) + 1:04d}"
         metadata.update({"evidence_id": evidence_id, "revision": self.revision})
         validation = self._record_validation(call, result, evidence_id)
         if validation is not None:
             metadata.update(
-                {"validation_id": validation.id, "validation_kind": validation.kind}
+                {
+                    "validation_id": validation.id,
+                    "validation_kind": validation.kind,
+                    "validation_scope": validation.scope,
+                }
             )
         self._records.append(
             EvidenceRecord(
@@ -140,23 +152,36 @@ class WorkspaceState:
         latest_by_command = {record.argv: record for record in current}
         if any(not record.ok for record in latest_by_command.values()):
             return "failed"
-        if any(record.ok for record in latest_by_command.values()):
+        if any(record.ok and record.scope == "project" for record in latest_by_command.values()):
             return "passed"
+        if any(record.ok for record in latest_by_command.values()):
+            return "focused_only"
         return "missing"
 
     def completion_feedback(self) -> str | None:
+        if not self._records:
+            return (
+                "Completion is not accepted: no workspace evidence has been collected. "
+                "Inspect the relevant files or project state before making a completion claim."
+            )
         status = self.validation_status()
         if status in {"not_required", "passed"}:
             return None
         if status == "failed":
             return (
-                "Completion is not accepted: a relevant test or check still fails for "
+                "Completion is not accepted: a recorded test or check still fails for "
                 "the current code. Use its execution output as feedback, correct the "
-                "implementation, and run the relevant validation again."
+                "implementation, and run validation again."
+            )
+        if status == "focused_only":
+            return (
+                "Completion is not accepted: focused validation passed, but there is no "
+                "successful project-wide baseline validation for the current workspace "
+                "revision. Run the project's full test, build, type, lint, or syntax check."
             )
         return (
-            "Completion is not accepted: the changed code has no successful relevant "
-            "validation. Run the strongest available test, build, type, lint, or syntax "
+            "Completion is not accepted: the changed workspace has no successful "
+            "project-wide validation. Run the project's full test, build, type, lint, or syntax "
             "check. An unrelated successful command is not completion evidence."
         )
 
@@ -317,6 +342,7 @@ class WorkspaceState:
             ok=result.ok,
             evidence_id=evidence_id,
             revision=self.revision,
+            scope=validation_scope(argv) or "focused",
         )
         self._validations.append(record)
         return record

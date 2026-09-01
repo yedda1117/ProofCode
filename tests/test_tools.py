@@ -117,6 +117,21 @@ class ToolRegistryTests(unittest.TestCase):
         self.assertEqual(result.metadata["exit_code"], 0)
         self.assertIn("verified", result.content)
 
+    def test_run_command_reports_workspace_changes(self) -> None:
+        result = self.registry.execute(
+            "run_command",
+            {
+                "argv": [
+                    sys.executable,
+                    "-c",
+                    "from pathlib import Path; Path('generated.py').write_text('new')",
+                ]
+            },
+        )
+
+        self.assertTrue(result.ok)
+        self.assertEqual(result.metadata["workspace_changes"], ["generated.py"])
+
     def test_rejects_unknown_arguments(self) -> None:
         result = self.registry.execute(
             "read_file",
