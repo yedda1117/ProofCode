@@ -63,7 +63,19 @@ class CodingAgent:
                     self.tools.schemas(),
                 )
             except (ModelError, ProtocolError) as exc:
+                self.on_event("model_error", {"step": step, "error": str(exc)})
                 return AgentResult(StopReason.MODEL_ERROR, str(exc), step)
+
+            self.on_event(
+                "model_response",
+                {
+                    "step": step,
+                    "content": response.content,
+                    "finish_reason": response.finish_reason,
+                    "tool_calls": len(response.tool_calls),
+                    "usage": response.usage,
+                },
+            )
 
             if response.tool_calls:
                 tool_messages = self._execute_calls(

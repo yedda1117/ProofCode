@@ -112,4 +112,9 @@ class OpenAICompatibleModel:
             tool_calls=tuple(calls),
             raw_message=normalized,
             finish_reason=choice.get("finish_reason"),
+            usage={
+                key: value
+                for key, value in (body.get("usage") or {}).items()
+                if isinstance(key, str) and isinstance(value, int)
+            },
         )

@@ -10,6 +10,7 @@ from proofcode.agent import CodingAgent
 from proofcode.config import Settings
 from proofcode.errors import ConfigurationError
 from proofcode.model import OpenAICompatibleModel
+from proofcode.trajectory import TrajectoryRecorder
 from proofcode.tools import ToolRegistry
 from proofcode.types import StopReason
 
@@ -26,6 +27,11 @@ def _parser() -> argparse.ArgumentParser:
         "--approve-all",
         action="store_true",
         help="Run write and command tools without interactive confirmation",
+    )
+    parser.add_argument(
+        "--no-trajectory",
+        action="store_true",
+        help="Do not write a JSONL run trajectory under .proofcode/runs",
     )
     return parser
 
@@ -90,13 +96,40 @@ def main(argv: list[str] | None = None) -> int:
         command_timeout=settings.command_timeout,
         approve=_approval(args.approve_all),
     )
+    recorder = None if args.no_trajectory else TrajectoryRecorder.create(settings.workspace)
+
+    def emit(kind: str, data: dict[str, Any]) -> None:
+        _event(kind, data)
+        if recorder is not None:
+            recorder(kind, data)
+
+    if recorder is not None:
+        recorder(
+            "run_started",
+            {
+                "task": task,
+                "workspace": str(settings.workspace),
+                "model": settings.model,
+                "max_steps": settings.max_steps,
+            },
+        )
+        print(f"[trajectory] {recorder.path}")
     result = CodingAgent(
         model=model,
         tools=tools,
         max_steps=settings.max_steps,
         context_chars=settings.context_chars,
-        on_event=_event,
+        on_event=emit,
     ).run(task)
+    if recorder is not None:
+        recorder(
+            "run_finished",
+            {
+                "reason": result.reason.value,
+                "answer": result.answer,
+                "steps": result.steps,
+            },
+        )
     print(f"\n[{result.reason.value}]\n{result.answer}")
     return 0 if result.reason == StopReason.COMPLETED else 1
 

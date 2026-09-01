@@ -18,6 +18,7 @@ class ModelResponse:
     tool_calls: tuple[ToolCall, ...]
     raw_message: dict[str, Any]
     finish_reason: str | None = None
+    usage: dict[str, int] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)

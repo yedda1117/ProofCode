@@ -6,6 +6,16 @@ from proofcode.model import OpenAICompatibleModel
 
 
 class ModelParsingTests(unittest.TestCase):
+    def test_preserves_api_usage(self) -> None:
+        response = OpenAICompatibleModel._parse(
+            {
+                "choices": [{"message": {"content": "done"}, "finish_reason": "stop"}],
+                "usage": {"prompt_tokens": 12, "completion_tokens": 3, "total_tokens": 15},
+            }
+        )
+
+        self.assertEqual(response.usage["total_tokens"], 15)
+
     def test_parses_native_tool_call(self) -> None:
         body = {
             "choices": [
