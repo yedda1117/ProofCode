@@ -49,6 +49,88 @@ class WorkspaceStateTests(unittest.TestCase):
         self.assertEqual(result.metadata["revision"], 0)
         self.assertEqual(state.changed_files, set())
 
+    def test_file_context_points_to_raw_evidence(self) -> None:
+        state = WorkspaceState("Understand the project")
+
+        state.record(
+            ToolCall("call-1", "read_file", {"path": "a.py"}),
+            ToolResult(
+                True,
+                "1 | value = 1",
+                {"path": "a.py", "start": 1, "end": 1, "content_hash": "a" * 64},
+            ),
+        )
+
+        entry = state.entries[0]
+        self.assertEqual(entry.kind, "file")
+        self.assertEqual(entry.evidence_ids, ("E0001",))
+        self.assertIn('"content": "1 | value = 1"', state.describe("E0001"))
+
+    def test_edit_marks_related_context_and_old_commands_stale(self) -> None:
+        state = WorkspaceState("Change a.py")
+        state.record(
+            ToolCall("call-1", "read_file", {"path": "a.py"}),
+            ToolResult(True, "source", {"path": "a.py", "start": 1, "end": 1}),
+        )
+        state.record(
+            ToolCall("call-2", "run_command", {"argv": ["python", "-m", "unittest"]}),
+            ToolResult(True, "OK", {"exit_code": 0}),
+        )
+
+        state.record(
+            ToolCall("call-3", "replace_text", {"path": "a.py"}),
+            ToolResult(
+                True,
+                "updated a.py",
+                {"changed": True, "path": "a.py", "after_hash": "b" * 64},
+            ),
+        )
+
+        self.assertTrue(state.entries[0].stale)
+        self.assertTrue(state.entries[1].stale)
+        self.assertFalse(state.entries[2].stale)
+        self.assertEqual(state.entries[2].revision, 1)
+
+    def test_index_is_compact_and_does_not_copy_raw_file_content(self) -> None:
+        state = WorkspaceState("Inspect")
+        state.record(
+            ToolCall("call-1", "read_file", {"path": "a.py"}),
+            ToolResult(
+                True,
+                "secret raw source body",
+                {"path": "a.py", "start": 1, "end": 20, "content_hash": "c" * 64},
+            ),
+        )
+
+        index = state.index()
+
+        self.assertIn("C0001", index)
+        self.assertIn("E0001", index)
+        self.assertNotIn("secret raw source body", index)
+
+    def test_search_context_becomes_stale_when_covered_path_changes(self) -> None:
+        state = WorkspaceState("Find and change a symbol")
+        state.record(
+            ToolCall("call-1", "search_text", {"path": "src", "query": "target"}),
+            ToolResult(
+                True,
+                "src/a.py:1: target",
+                {"path": "src", "query": "target", "matches": 1},
+            ),
+        )
+
+        state.record(
+            ToolCall("call-2", "replace_text", {"path": "src/a.py"}),
+            ToolResult(
+                True,
+                "updated src/a.py",
+                {"changed": True, "path": "src/a.py", "after_hash": "e" * 64},
+            ),
+        )
+
+        self.assertEqual(state.entries[0].kind, "search")
+        self.assertTrue(state.entries[0].stale)
+
 
 if __name__ == "__main__":
     unittest.main()

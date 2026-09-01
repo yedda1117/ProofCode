@@ -28,11 +28,16 @@ class Conversation:
             ]
         )
 
-    def messages(self, max_chars: int) -> list[dict[str, Any]]:
+    def messages(self, max_chars: int, workspace_context: str | None = None) -> list[dict[str, Any]]:
         if max_chars < 1:
             raise ValueError("max_chars must be positive")
         selected: list[list[dict[str, Any]]] = []
-        used = self._size(self._initial)
+        context_message = (
+            [{"role": "system", "content": workspace_context}]
+            if workspace_context
+            else []
+        )
+        used = self._size([*self._initial, *context_message])
         for exchange in reversed(self._exchanges):
             exchange_size = self._size(exchange)
             if selected and used + exchange_size > max_chars:
@@ -43,6 +48,7 @@ class Conversation:
         selected.reverse()
         omitted = len(self._exchanges) - len(selected)
         messages = deepcopy(self._initial)
+        messages.extend(context_message)
         if omitted:
             messages.append(
                 {

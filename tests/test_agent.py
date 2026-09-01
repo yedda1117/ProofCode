@@ -85,6 +85,28 @@ class CodingAgentTests(unittest.TestCase):
             self.assertEqual(result.reason, StopReason.REPEATED_ACTION)
             self.assertEqual(result.steps, 3)
 
+    def test_injects_hierarchical_context_into_each_model_call(self) -> None:
+        with tempfile.TemporaryDirectory(dir=Path(__file__).parent) as directory:
+            root = Path(directory)
+            (root / "value.txt").write_text("value", encoding="utf-8")
+            model = ScriptedModel(
+                [
+                    tool_response("1", "read_file", {"path": "value.txt"}),
+                    final_response("Inspected value.txt."),
+                ]
+            )
+            registry = ToolRegistry(root, approve=lambda _name, _args: True)
+
+            result = CodingAgent(model=model, tools=registry).run("Inspect the value")
+
+            self.assertEqual(result.reason, StopReason.COMPLETED)
+            first_context = str(model.seen_messages[0])
+            second_context = str(model.seen_messages[1])
+            self.assertIn("L1 CONTEXT INDEX", first_context)
+            self.assertIn("no verified workspace observations", first_context)
+            self.assertIn("C0001", second_context)
+            self.assertIn("E0001", second_context)
+
 
 if __name__ == "__main__":
     unittest.main()

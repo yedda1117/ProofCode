@@ -25,6 +25,7 @@ class ToolResult:
     ok: bool
     content: str
     metadata: dict[str, Any] = field(default_factory=dict)
+    raw_content: str | None = None
 
 
 class StopReason(str, Enum):

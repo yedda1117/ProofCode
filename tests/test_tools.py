@@ -4,6 +4,8 @@ import unittest
 from pathlib import Path
 
 from proofcode.tools import ToolRegistry
+from proofcode.state import WorkspaceState
+from proofcode.types import ToolCall, ToolResult
 
 
 class ToolRegistryTests(unittest.TestCase):
@@ -73,6 +75,60 @@ class ToolRegistryTests(unittest.TestCase):
 
         self.assertFalse(result.ok)
         self.assertIn("unknown arguments", result.content)
+
+    def test_context_tools_retrieve_index_and_raw_evidence(self) -> None:
+        state = WorkspaceState("Inspect")
+        state.record(
+            ToolCall("call-1", "read_file", {"path": "a.py"}),
+            ToolResult(
+                True,
+                "1 | source",
+                {"path": "a.py", "start": 1, "end": 1, "content_hash": "d" * 64},
+            ),
+        )
+        self.registry.attach_state(state)
+
+        index = self.registry.execute("list_context", {})
+        evidence = self.registry.execute("read_context", {"id": "E0001"})
+
+        self.assertTrue(index.ok)
+        self.assertIn("L1 CONTEXT INDEX", index.content)
+        self.assertTrue(evidence.ok)
+        self.assertIn("1 | source", evidence.content)
+
+    def test_truncated_tool_result_retains_full_content_for_evidence(self) -> None:
+        registry = ToolRegistry(
+            self.root,
+            output_limit=120,
+            approve=lambda _name, _args: True,
+        )
+        (self.root / "long.txt").write_text("x" * 500, encoding="utf-8")
+
+        result = registry.execute("read_file", {"path": "long.txt"})
+
+        self.assertTrue(result.metadata["truncated"])
+        self.assertLess(len(result.content), len(result.raw_content))
+
+    def test_read_context_supports_chunked_recovery(self) -> None:
+        state = WorkspaceState("Inspect")
+        state.record(
+            ToolCall("call-1", "read_file", {"path": "long.py"}),
+            ToolResult(True, "x" * 500, {"path": "long.py", "start": 1, "end": 1}),
+        )
+        self.registry.attach_state(state)
+
+        first = self.registry.execute(
+            "read_context",
+            {"id": "E0001", "offset": 0, "max_chars": 100},
+        )
+        second = self.registry.execute(
+            "read_context",
+            {"id": "E0001", "offset": first.metadata["next_offset"], "max_chars": 100},
+        )
+
+        self.assertEqual(len(first.content), 100)
+        self.assertEqual(second.metadata["offset"], 100)
+        self.assertGreater(second.metadata["total_chars"], 500)
 
 
 if __name__ == "__main__":

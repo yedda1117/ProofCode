@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from proofcode.errors import ApprovalDenied, PathViolation, ToolError
+from proofcode.state import WorkspaceState
 from proofcode.types import ToolResult
 
 
@@ -69,7 +70,11 @@ class ToolRegistry:
         self.output_limit = output_limit
         self.command_timeout = command_timeout
         self.approve = approve or (lambda _name, _args: False)
+        self.state: WorkspaceState | None = None
         self._tools = self._build_tools()
+
+    def attach_state(self, state: WorkspaceState) -> None:
+        self.state = state
 
     def schemas(self) -> list[dict[str, Any]]:
         return [tool.schema() for tool in self._tools.values()]
@@ -93,6 +98,7 @@ class ToolRegistry:
                 result.ok,
                 content,
                 metadata,
+                result.content if truncated else result.raw_content,
             )
         except ApprovalDenied as exc:
             return ToolResult(False, str(exc), {"category": "approval_denied"})
@@ -177,6 +183,25 @@ class ToolRegistry:
                 self._run_command,
                 requires_approval=True,
             ),
+            Tool(
+                "list_context",
+                "Show the compact context index and current working context.",
+                self._object_schema({}, []),
+                self._list_context,
+            ),
+            Tool(
+                "read_context",
+                "Read a bounded chunk of one context entry or raw evidence record by its C or E identifier.",
+                self._object_schema(
+                    {
+                        "id": {"type": "string"},
+                        "offset": {"type": "integer"},
+                        "max_chars": {"type": "integer"},
+                    },
+                    ["id"],
+                ),
+                self._read_context,
+            ),
         ]
         return {tool.name: tool for tool in tools}
 
@@ -194,7 +219,11 @@ class ToolRegistry:
             if len(entries) == limit:
                 break
         suffix = "\n[entry limit reached]" if len(entries) == limit else ""
-        return ToolResult(True, "\n".join(entries) + suffix, {"entries": len(entries)})
+        return ToolResult(
+            True,
+            "\n".join(entries) + suffix,
+            {"entries": len(entries), "path": args["path"]},
+        )
 
     def _search_text(self, args: dict[str, Any]) -> ToolResult:
         query = args["query"]
@@ -220,8 +249,21 @@ class ToolRegistry:
                 if query in line:
                     matches.append(f"{self.workspace.relative(candidate)}:{number}: {line}")
                     if len(matches) == limit:
-                        return ToolResult(True, "\n".join(matches) + "\n[result limit reached]")
-        return ToolResult(True, "\n".join(matches) if matches else "no matches")
+                        return ToolResult(
+                            True,
+                            "\n".join(matches) + "\n[result limit reached]",
+                            {
+                                "path": args["path"],
+                                "query": query,
+                                "matches": len(matches),
+                                "limit_reached": True,
+                            },
+                        )
+        return ToolResult(
+            True,
+            "\n".join(matches) if matches else "no matches",
+            {"path": args["path"], "query": query, "matches": len(matches)},
+        )
 
     def _read_file(self, args: dict[str, Any]) -> ToolResult:
         path = self.workspace.resolve(args["path"], must_exist=True)
@@ -339,6 +381,35 @@ class ToolRegistry:
             completed.returncode == 0,
             f"exit_code={completed.returncode}\nduration={elapsed}s\n{output}",
             {"exit_code": completed.returncode, "duration": elapsed},
+        )
+
+    def _list_context(self, _args: dict[str, Any]) -> ToolResult:
+        if self.state is None:
+            raise ToolError("context state is not attached")
+        return ToolResult(True, self.state.prompt_context())
+
+    def _read_context(self, args: dict[str, Any]) -> ToolResult:
+        if self.state is None:
+            raise ToolError("context state is not attached")
+        identifier = args["id"]
+        if not isinstance(identifier, str) or not identifier:
+            raise ToolError("id must be a non-empty string")
+        content = self.state.describe(identifier)
+        if content is None:
+            raise ToolError(f"unknown context identifier: {identifier}")
+        offset = self._bounded_int(args.get("offset", 0), 0, len(content), "offset")
+        max_chars = self._bounded_int(args.get("max_chars", 8_000), 1, 12_000, "max_chars")
+        end = min(len(content), offset + max_chars)
+        return ToolResult(
+            True,
+            content[offset:end],
+            {
+                "context_id": identifier,
+                "offset": offset,
+                "end": end,
+                "total_chars": len(content),
+                "next_offset": end if end < len(content) else None,
+            },
         )
 
     def _truncate(self, content: str) -> tuple[str, bool]:

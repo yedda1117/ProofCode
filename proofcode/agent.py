@@ -59,14 +59,18 @@ class CodingAgent:
         tools: ToolRegistry,
         max_steps: int = 20,
         context_chars: int = 120_000,
+        recent_history_chars: int = 24_000,
         on_event: EventCallback | None = None,
     ) -> None:
         if max_steps < 1:
             raise ValueError("max_steps must be at least 1")
+        if recent_history_chars < 1:
+            raise ValueError("recent_history_chars must be at least 1")
         self.model = model
         self.tools = tools
         self.max_steps = max_steps
         self.context_chars = context_chars
+        self.recent_history_chars = recent_history_chars
         self.on_event = on_event or (lambda _kind, _data: None)
 
     def run(self, task: str) -> AgentResult:
@@ -74,14 +78,18 @@ class CodingAgent:
             raise ValueError("task must not be empty")
         conversation = Conversation(SYSTEM_PROMPT, task.strip())
         evidence = Evidence()
-        workspace_state = WorkspaceState()
+        workspace_state = WorkspaceState(task)
+        self.tools.attach_state(workspace_state)
         signatures: dict[str, int] = {}
 
         for step in range(1, self.max_steps + 1):
             self.on_event("step", {"step": step})
             try:
                 response = self.model.complete(
-                    conversation.messages(self.context_chars),
+                    conversation.messages(
+                        min(self.context_chars, self.recent_history_chars),
+                        workspace_state.prompt_context(),
+                    ),
                     self.tools.schemas(),
                 )
             except (ModelError, ProtocolError) as exc:
