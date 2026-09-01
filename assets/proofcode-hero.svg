@@ -1,0 +1,42 @@
+<svg width="1200" height="360" viewBox="0 0 1200 360" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1200" y2="360" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#07111F"/><stop offset="0.5" stop-color="#111B38"/><stop offset="1" stop-color="#071827"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="310" y1="80" x2="900" y2="285" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#5EEAD4"/><stop offset="0.48" stop-color="#60A5FA"/><stop offset="1" stop-color="#C084FC"/>
+    </linearGradient>
+    <filter id="glow" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur stdDeviation="18"/></filter>
+    <style>
+      .pulse { animation: pulse 3s ease-in-out infinite; transform-origin:center; }
+      .dash { stroke-dasharray: 8 12; animation: dash 8s linear infinite; }
+      .float { animation: float 4s ease-in-out infinite; }
+      @keyframes pulse { 0%,100%{opacity:.28} 50%{opacity:.75} }
+      @keyframes dash { to { stroke-dashoffset:-200; } }
+      @keyframes float { 0%,100%{transform:translateY(0)} 50%{transform:translateY(-7px)} }
+    </style>
+  </defs>
+  <rect width="1200" height="360" rx="28" fill="url(#bg)"/>
+  <circle class="pulse" cx="170" cy="88" r="82" fill="#2563EB" opacity=".25" filter="url(#glow)"/>
+  <circle class="pulse" cx="1030" cy="265" r="90" fill="#8B5CF6" opacity=".22" filter="url(#glow)"/>
+  <path class="dash" d="M80 285 C250 220, 300 315, 470 252 S760 190, 1120 92" stroke="url(#accent)" stroke-width="2" opacity=".45"/>
+  <g class="float">
+    <rect x="90" y="105" width="122" height="122" rx="28" fill="#0C1D32" stroke="#334B68"/>
+    <path d="M128 166l24 24 43-55" stroke="url(#accent)" stroke-width="12" stroke-linecap="round" stroke-linejoin="round"/>
+    <circle cx="190" cy="128" r="6" fill="#5EEAD4"/>
+  </g>
+  <text x="250" y="145" fill="white" font-family="Inter,Segoe UI,Arial,sans-serif" font-size="68" font-weight="750" letter-spacing="-2">ProofCode</text>
+  <text x="252" y="194" fill="#AFC2DA" font-family="Inter,Segoe UI,Arial,sans-serif" font-size="23">Evidence-driven · Revision-aware · Auditable Coding Agent</text>
+  <rect x="252" y="225" width="160" height="42" rx="21" fill="#0B2940" stroke="#2DD4BF" stroke-opacity=".55"/>
+  <text x="332" y="252" text-anchor="middle" fill="#77F3DD" font-family="Inter,Segoe UI,Arial,sans-serif" font-size="16" font-weight="600">0 runtime deps</text>
+  <rect x="425" y="225" width="144" height="42" rx="21" fill="#102443" stroke="#60A5FA" stroke-opacity=".55"/>
+  <text x="497" y="252" text-anchor="middle" fill="#93C5FD" font-family="Inter,Segoe UI,Arial,sans-serif" font-size="16" font-weight="600">41 tests</text>
+  <rect x="582" y="225" width="184" height="42" rx="21" fill="#23173B" stroke="#C084FC" stroke-opacity=".55"/>
+  <text x="674" y="252" text-anchor="middle" fill="#D8B4FE" font-family="Inter,Segoe UI,Arial,sans-serif" font-size="16" font-weight="600">native tool calling</text>
+  <g opacity=".75">
+    <circle cx="1010" cy="92" r="5" fill="#5EEAD4"/><circle cx="1040" cy="92" r="5" fill="#60A5FA"/><circle cx="1070" cy="92" r="5" fill="#C084FC"/>
+    <rect x="920" y="112" width="205" height="112" rx="14" fill="#0A1425" stroke="#30415A"/>
+    <path d="M945 142h98M945 165h145M945 188h116" stroke="#64809F" stroke-width="7" stroke-linecap="round"/>
+    <path d="M1065 142h35" stroke="#5EEAD4" stroke-width="7" stroke-linecap="round"/>
+  </g>
+</svg>
