@@ -17,14 +17,15 @@ python -m proofcode --workspace demo/workspace --max-steps 16 "修复 auth.py：
 Expected visible sequence:
 
 1. `read_file` inspects the implementation and test.
-2. `replace_text` pauses at `Approval required`; answer `y`.
+2. `replace_text` pauses at the yellow `APPROVAL REQUIRED` panel; answer `y`.
 3. The focused test also requires approval and passes.
 4. `list_context` shows the workspace revision, changed file, L1 index, L2
    summaries, and `validation_status: focused_only`.
 5. `read_context` recovers the complete focused-test output from its `E...`
    evidence record.
-6. The project-wide discovery command requires approval and passes; the Agent
-   can now finish with evidence from the current revision.
+6. The project-wide discovery command requires approval and passes; the green
+   `COMPLETED · evidence gate satisfied` heading confirms that Runtime accepted
+   evidence from the current revision.
 
 The exact number of model steps and evidence IDs can vary. Record one complete
 run first, then trim model latency rather than cutting any approval, context, or

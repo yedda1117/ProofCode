@@ -4,7 +4,7 @@
   <br/>
 
   <a href="#-quick-start"><img src="https://img.shields.io/badge/Python-3.11+-3776AB?style=for-the-badge&logo=python&logoColor=white" alt="Python 3.11+" /></a>
-  <a href="#-testing--evaluation"><img src="https://img.shields.io/badge/Tests-46%20Passing-22C55E?style=for-the-badge&logo=pytest&logoColor=white" alt="46 tests passing" /></a>
+  <a href="#-testing--evaluation"><img src="https://img.shields.io/badge/Tests-49%20Passing-22C55E?style=for-the-badge&logo=pytest&logoColor=white" alt="49 tests passing" /></a>
   <a href="#-design-principles"><img src="https://img.shields.io/badge/Agent_Framework-None-8B5CF6?style=for-the-badge" alt="No agent framework" /></a>
   <a href="#-quick-start"><img src="https://img.shields.io/badge/Runtime_Dependencies-0-14B8A6?style=for-the-badge" alt="Zero runtime dependencies" /></a>
 
@@ -170,6 +170,8 @@ proofcode --workspace ".\demo-project" "检查项目并修复失败的测试"
 python -m proofcode --workspace ".\demo-project" --approve-all "运行测试并修复错误"
 ```
 
+交互式终端默认使用结构化状态、语义颜色和审批面板；输出重定向时自动退回纯文本。需要主动关闭 ANSI 颜色时使用 `--no-color`。这只影响显示，不改变审批、工具执行或完成门控。
+
 ## 🧠 Layered Context
 
 ProofCode 不丢弃长输出，而是改变它们进入模型上下文的方式。
@@ -244,7 +246,7 @@ python -m unittest discover -v
 ```
 
 ```text
-Ran 46 tests
+Ran 49 tests
 OK
 ```
 
