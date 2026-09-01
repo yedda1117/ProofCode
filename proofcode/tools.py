@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import fnmatch
+import hashlib
 import json
 import subprocess
 import time
@@ -84,10 +85,14 @@ class ToolRegistry:
             if tool.requires_approval and not self.approve(name, arguments):
                 raise ApprovalDenied(f"approval denied for {name}")
             result = tool.handler(arguments)
+            content, truncated = self._truncate(result.content)
+            metadata = dict(result.metadata)
+            if truncated:
+                metadata["truncated"] = True
             return ToolResult(
                 result.ok,
-                self._truncate(result.content),
-                result.metadata,
+                content,
+                metadata,
             )
         except ApprovalDenied as exc:
             return ToolResult(False, str(exc), {"category": "approval_denied"})
@@ -224,14 +229,32 @@ class ToolRegistry:
             raise ToolError(f"not a file: {args['path']}")
         lines = path.read_text(encoding="utf-8").splitlines()
         if not lines:
-            return ToolResult(True, "[empty file]", {"path": args["path"], "start": 0, "end": 0})
+            return ToolResult(
+                True,
+                "[empty file]",
+                {
+                    "path": args["path"],
+                    "start": 0,
+                    "end": 0,
+                    "content_hash": self._file_hash(path),
+                },
+            )
         start = self._bounded_int(args.get("start_line", 1), 1, max(1, len(lines)), "start_line")
         default_end = min(len(lines), start + 399)
         end = self._bounded_int(args.get("end_line", default_end), start, max(start, len(lines)), "end_line")
         if end - start + 1 > 400:
             raise ToolError("read_file accepts at most 400 lines per call")
         content = "\n".join(f"{index:>6} | {lines[index - 1]}" for index in range(start, end + 1))
-        return ToolResult(True, content, {"path": args["path"], "start": start, "end": end})
+        return ToolResult(
+            True,
+            content,
+            {
+                "path": args["path"],
+                "start": start,
+                "end": end,
+                "content_hash": self._file_hash(path),
+            },
+        )
 
     def _replace_text(self, args: dict[str, Any]) -> ToolResult:
         path = self.workspace.resolve(args["path"], must_exist=True)
@@ -244,11 +267,21 @@ class ToolRegistry:
         if not isinstance(new_text, str):
             raise ToolError("new_text must be a string")
         content = path.read_text(encoding="utf-8")
+        before_hash = self._file_hash(path)
         count = content.count(old_text)
         if count != 1:
             raise ToolError(f"old_text must occur exactly once; found {count} occurrences")
         path.write_text(content.replace(old_text, new_text, 1), encoding="utf-8")
-        return ToolResult(True, f"updated {args['path']}", {"changed": True, "path": args["path"]})
+        return ToolResult(
+            True,
+            f"updated {args['path']}",
+            {
+                "changed": True,
+                "path": args["path"],
+                "before_hash": before_hash,
+                "after_hash": self._file_hash(path),
+            },
+        )
 
     def _create_file(self, args: dict[str, Any]) -> ToolResult:
         path = self.workspace.resolve(args["path"])
@@ -259,7 +292,15 @@ class ToolRegistry:
             raise ToolError(f"target already exists: {args['path']}")
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(content, encoding="utf-8")
-        return ToolResult(True, f"created {args['path']}", {"changed": True, "path": args["path"]})
+        return ToolResult(
+            True,
+            f"created {args['path']}",
+            {
+                "changed": True,
+                "path": args["path"],
+                "after_hash": self._file_hash(path),
+            },
+        )
 
     def _run_command(self, args: dict[str, Any]) -> ToolResult:
         argv = args["argv"]
@@ -300,12 +341,17 @@ class ToolRegistry:
             {"exit_code": completed.returncode, "duration": elapsed},
         )
 
-    def _truncate(self, content: str) -> str:
+    def _truncate(self, content: str) -> tuple[str, bool]:
         if len(content) <= self.output_limit:
-            return content
+            return content, False
         half = max(1, (self.output_limit - 100) // 2)
         omitted = len(content) - (2 * half)
-        return content[:half] + f"\n...[{omitted} characters omitted]...\n" + content[-half:]
+        shortened = content[:half] + f"\n...[{omitted} characters omitted]...\n" + content[-half:]
+        return shortened, True
+
+    @staticmethod
+    def _file_hash(path: Path) -> str:
+        return hashlib.sha256(path.read_bytes()).hexdigest()
 
     @staticmethod
     def _validate_required(schema: JsonSchema, arguments: dict[str, Any]) -> None:

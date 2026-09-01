@@ -7,6 +7,7 @@ from typing import Any, Callable
 from proofcode.context import Conversation
 from proofcode.errors import ModelError, ProtocolError
 from proofcode.model import ChatModel
+from proofcode.state import WorkspaceState
 from proofcode.tools import ToolRegistry, format_tool_result
 from proofcode.types import AgentResult, ModelResponse, StopReason, ToolCall
 
@@ -73,6 +74,7 @@ class CodingAgent:
             raise ValueError("task must not be empty")
         conversation = Conversation(SYSTEM_PROMPT, task.strip())
         evidence = Evidence()
+        workspace_state = WorkspaceState()
         signatures: dict[str, int] = {}
 
         for step in range(1, self.max_steps + 1):
@@ -86,7 +88,12 @@ class CodingAgent:
                 return AgentResult(StopReason.MODEL_ERROR, str(exc), step)
 
             if response.tool_calls:
-                tool_messages = self._execute_calls(response, evidence, signatures)
+                tool_messages = self._execute_calls(
+                    response,
+                    evidence,
+                    workspace_state,
+                    signatures,
+                )
                 if tool_messages is None:
                     return AgentResult(
                         StopReason.REPEATED_ACTION,
@@ -120,6 +127,7 @@ class CodingAgent:
         self,
         response: ModelResponse,
         evidence: Evidence,
+        workspace_state: WorkspaceState,
         signatures: dict[str, int],
     ) -> list[dict[str, Any]] | None:
         messages: list[dict[str, Any]] = []
@@ -138,10 +146,17 @@ class CodingAgent:
                 {"id": call.id, "name": call.name, "arguments": call.arguments},
             )
             result = self.tools.execute(call.name, call.arguments)
+            result = workspace_state.record(call, result)
             evidence.observe(call, result.metadata, result.ok)
             self.on_event(
                 "tool_result",
-                {"id": call.id, "name": call.name, "ok": result.ok, "result": result.content},
+                {
+                    "id": call.id,
+                    "name": call.name,
+                    "ok": result.ok,
+                    "result": result.content,
+                    "metadata": result.metadata,
+                },
             )
             messages.append(
                 {

@@ -23,6 +23,7 @@ class ToolRegistryTests(unittest.TestCase):
         self.assertTrue(result.ok)
         self.assertIn("1 | first", result.content)
         self.assertIn("2 | second", result.content)
+        self.assertEqual(len(result.metadata["content_hash"]), 64)
 
     def test_path_cannot_escape_workspace(self) -> None:
         result = self.registry.execute("read_file", {"path": "../outside.txt"})
@@ -41,6 +42,18 @@ class ToolRegistryTests(unittest.TestCase):
 
         self.assertFalse(result.ok)
         self.assertEqual(path.read_text(encoding="utf-8"), "same\nsame\n")
+
+    def test_replace_records_before_and_after_hashes(self) -> None:
+        path = self.root / "a.txt"
+        path.write_text("old", encoding="utf-8")
+
+        result = self.registry.execute(
+            "replace_text",
+            {"path": "a.txt", "old_text": "old", "new_text": "new"},
+        )
+
+        self.assertTrue(result.ok)
+        self.assertNotEqual(result.metadata["before_hash"], result.metadata["after_hash"])
 
     def test_run_command_captures_exit_code(self) -> None:
         result = self.registry.execute(
