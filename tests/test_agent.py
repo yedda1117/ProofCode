@@ -45,10 +45,17 @@ class ScriptedModel:
 
 
 class CodingAgentTests(unittest.TestCase):
-    def test_changed_file_requires_successful_command_before_completion(self) -> None:
+    def test_changed_file_requires_relevant_validation_before_completion(self) -> None:
         with tempfile.TemporaryDirectory(dir=Path(__file__).parent) as directory:
             root = Path(directory)
             (root / "value.txt").write_text("old", encoding="utf-8")
+            (root / "test_sample.py").write_text(
+                "import unittest\n\n"
+                "class SampleTests(unittest.TestCase):\n"
+                "    def test_value(self):\n"
+                "        self.assertTrue(True)\n",
+                encoding="utf-8",
+            )
             model = ScriptedModel(
                 [
                     tool_response(
@@ -63,16 +70,69 @@ class CodingAgentTests(unittest.TestCase):
                         {"argv": [sys.executable, "-c", "print('ok')"]},
                     ),
                     final_response("Changed value.txt and validated it."),
+                    tool_response(
+                        "3",
+                        "run_command",
+                        {"argv": [sys.executable, "-m", "unittest", "discover"]},
+                    ),
+                    final_response("Changed value.txt and validated it."),
                 ]
             )
             registry = ToolRegistry(root, approve=lambda _name, _args: True)
 
-            result = CodingAgent(model=model, tools=registry, max_steps=5).run("Update it")
+            result = CodingAgent(model=model, tools=registry, max_steps=7).run("Update it")
 
             self.assertEqual(result.reason, StopReason.COMPLETED)
             self.assertEqual(root.joinpath("value.txt").read_text(encoding="utf-8"), "new")
-            self.assertEqual(result.steps, 4)
+            self.assertEqual(result.steps, 6)
             self.assertIn("Completion is not accepted", str(model.seen_messages[2]))
+            self.assertIn("unrelated successful command", str(model.seen_messages[4]))
+
+    def test_failed_validation_is_returned_as_feedback_before_retry(self) -> None:
+        with tempfile.TemporaryDirectory(dir=Path(__file__).parent) as directory:
+            root = Path(directory)
+            (root / "value.txt").write_text("old", encoding="utf-8")
+            (root / "test_sample.py").write_text(
+                "import unittest\n"
+                "from pathlib import Path\n\n"
+                "class SampleTests(unittest.TestCase):\n"
+                "    def test_value(self):\n"
+                "        self.assertEqual(Path('value.txt').read_text(), 'new')\n",
+                encoding="utf-8",
+            )
+            model = ScriptedModel(
+                [
+                    tool_response(
+                        "1",
+                        "replace_text",
+                        {"path": "value.txt", "old_text": "old", "new_text": "bad"},
+                    ),
+                    tool_response(
+                        "2",
+                        "run_command",
+                        {"argv": [sys.executable, "-m", "unittest", "discover"]},
+                    ),
+                    final_response("Done."),
+                    tool_response(
+                        "3",
+                        "replace_text",
+                        {"path": "value.txt", "old_text": "bad", "new_text": "new"},
+                    ),
+                    tool_response(
+                        "4",
+                        "run_command",
+                        {"argv": [sys.executable, "-m", "unittest", "discover"]},
+                    ),
+                    final_response("Changed and tested value.txt."),
+                ]
+            )
+            registry = ToolRegistry(root, approve=lambda _name, _args: True)
+
+            result = CodingAgent(model=model, tools=registry, max_steps=6).run("Update it")
+
+            self.assertEqual(result.reason, StopReason.COMPLETED)
+            self.assertEqual(result.steps, 6)
+            self.assertIn("relevant test or check still fails", str(model.seen_messages[3]))
 
     def test_stops_repeated_identical_action(self) -> None:
         with tempfile.TemporaryDirectory(dir=Path(__file__).parent) as directory:

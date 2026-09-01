@@ -131,6 +131,77 @@ class WorkspaceStateTests(unittest.TestCase):
         self.assertEqual(state.entries[0].kind, "search")
         self.assertTrue(state.entries[0].stale)
 
+    def test_unrelated_successful_command_is_not_completion_evidence(self) -> None:
+        state = WorkspaceState("Change a.py")
+        state.record(
+            ToolCall("call-1", "replace_text", {"path": "a.py"}),
+            ToolResult(True, "updated", {"changed": True, "path": "a.py"}),
+        )
+        state.record(
+            ToolCall("call-2", "run_command", {"argv": ["python", "-c", "print('ok')"]}),
+            ToolResult(True, "ok", {"exit_code": 0}),
+        )
+
+        self.assertEqual(state.validation_status(), "missing")
+        self.assertIn("unrelated successful command", state.completion_feedback())
+
+    def test_test_result_is_recorded_as_validation(self) -> None:
+        state = WorkspaceState("Change a.py")
+        state.record(
+            ToolCall("call-1", "replace_text", {"path": "a.py"}),
+            ToolResult(True, "updated", {"changed": True, "path": "a.py"}),
+        )
+
+        result = state.record(
+            ToolCall("call-2", "run_command", {"argv": ["python", "-m", "unittest"]}),
+            ToolResult(True, "OK", {"exit_code": 0}),
+        )
+
+        self.assertEqual(result.metadata["validation_id"], "V0001")
+        self.assertEqual(result.metadata["validation_kind"], "test")
+        self.assertEqual(state.validation_status(), "passed")
+        self.assertIsNone(state.completion_feedback())
+        self.assertIn("validation_status: passed", state.index())
+
+    def test_failed_validation_must_be_resolved(self) -> None:
+        state = WorkspaceState("Change a.py")
+        state.record(
+            ToolCall("call-1", "replace_text", {"path": "a.py"}),
+            ToolResult(True, "updated", {"changed": True, "path": "a.py"}),
+        )
+        command = ["python", "-m", "unittest", "tests.test_a"]
+        state.record(
+            ToolCall("call-2", "run_command", {"argv": command}),
+            ToolResult(False, "FAILED", {"exit_code": 1}),
+        )
+
+        self.assertEqual(state.validation_status(), "failed")
+
+        state.record(
+            ToolCall("call-3", "run_command", {"argv": command}),
+            ToolResult(True, "OK", {"exit_code": 0}),
+        )
+
+        self.assertEqual(state.validation_status(), "passed")
+
+    def test_edit_invalidates_previous_validation(self) -> None:
+        state = WorkspaceState("Change a.py")
+        state.record(
+            ToolCall("call-1", "replace_text", {"path": "a.py"}),
+            ToolResult(True, "updated", {"changed": True, "path": "a.py"}),
+        )
+        state.record(
+            ToolCall("call-2", "run_command", {"argv": ["pytest"]}),
+            ToolResult(True, "passed", {"exit_code": 0}),
+        )
+        state.record(
+            ToolCall("call-3", "replace_text", {"path": "a.py"}),
+            ToolResult(True, "updated again", {"changed": True, "path": "a.py"}),
+        )
+
+        self.assertTrue(state.validations[0].stale)
+        self.assertEqual(state.validation_status(), "missing")
+
 
 if __name__ == "__main__":
     unittest.main()

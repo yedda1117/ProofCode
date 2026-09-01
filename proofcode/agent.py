@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass, field
 from typing import Any, Callable
 
 from proofcode.context import Conversation
@@ -14,41 +13,13 @@ from proofcode.types import AgentResult, ModelResponse, StopReason, ToolCall
 
 SYSTEM_PROMPT = """You are a coding agent operating inside a local workspace.
 
-Inspect relevant files before editing. Make the smallest change that satisfies the task. Use tools instead of guessing about repository contents. Run relevant tests or validation after changing files. Do not claim success when validation failed or was not run. Explain the final changes and the validation evidence concisely.
+Inspect relevant files before editing and use existing tests to understand behavior when practical. Make the smallest change that satisfies the task. After editing, run the most relevant tests first and use failures as feedback for the next change. Run broader regression tests when they are available and proportionate to the task. Do not use an unrelated successful command as evidence of completion. Explain the final changes and the validation evidence concisely.
 
 Tool paths are relative to the workspace. Commands must be expressed as an argv array and run without a shell. If a tool fails, inspect its structured error and change approach. Do not repeat the same failing action.
 """
 
 
 EventCallback = Callable[[str, dict[str, Any]], None]
-
-
-@dataclass
-class Evidence:
-    changed_files: set[str] = field(default_factory=set)
-    commands: list[dict[str, Any]] = field(default_factory=list)
-
-    def observe(self, call: ToolCall, result_metadata: dict[str, Any], ok: bool) -> None:
-        if result_metadata.get("changed") and result_metadata.get("path"):
-            self.changed_files.add(str(result_metadata["path"]))
-        if call.name == "run_command":
-            self.commands.append(
-                {
-                    "argv": call.arguments.get("argv"),
-                    "ok": ok,
-                    "exit_code": result_metadata.get("exit_code"),
-                }
-            )
-
-    def completion_feedback(self) -> str | None:
-        if self.changed_files and not any(command["ok"] for command in self.commands):
-            return (
-                "Completion is not accepted yet: files were changed but no command has "
-                "completed successfully. Run the most relevant available test, build, "
-                "or syntax-check command. If no validation command exists, inspect the "
-                "diff with an appropriate local command and explain the limitation."
-            )
-        return None
 
 
 class CodingAgent:
@@ -77,7 +48,6 @@ class CodingAgent:
         if not task.strip():
             raise ValueError("task must not be empty")
         conversation = Conversation(SYSTEM_PROMPT, task.strip())
-        evidence = Evidence()
         workspace_state = WorkspaceState(task)
         self.tools.attach_state(workspace_state)
         signatures: dict[str, int] = {}
@@ -98,7 +68,6 @@ class CodingAgent:
             if response.tool_calls:
                 tool_messages = self._execute_calls(
                     response,
-                    evidence,
                     workspace_state,
                     signatures,
                 )
@@ -118,7 +87,7 @@ class CodingAgent:
                     step,
                 )
 
-            feedback = evidence.completion_feedback()
+            feedback = workspace_state.completion_feedback()
             if feedback:
                 self.on_event("verification_rejected", {"reason": feedback})
                 conversation.add_feedback(response.raw_message, feedback)
@@ -134,7 +103,6 @@ class CodingAgent:
     def _execute_calls(
         self,
         response: ModelResponse,
-        evidence: Evidence,
         workspace_state: WorkspaceState,
         signatures: dict[str, int],
     ) -> list[dict[str, Any]] | None:
@@ -155,7 +123,6 @@ class CodingAgent:
             )
             result = self.tools.execute(call.name, call.arguments)
             result = workspace_state.record(call, result)
-            evidence.observe(call, result.metadata, result.ok)
             self.on_event(
                 "tool_result",
                 {

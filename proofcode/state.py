@@ -5,6 +5,7 @@ import json
 from typing import Any
 
 from proofcode.types import ToolCall, ToolResult
+from proofcode.validation import classify_validation
 
 
 @dataclass(frozen=True)
@@ -30,6 +31,17 @@ class ContextEntry:
     stale: bool = False
 
 
+@dataclass
+class ValidationRecord:
+    id: str
+    argv: tuple[str, ...]
+    kind: str
+    ok: bool
+    evidence_id: str
+    revision: int
+    stale: bool = False
+
+
 class WorkspaceState:
     def __init__(self, task: str = "") -> None:
         self.task = task.strip()
@@ -37,6 +49,7 @@ class WorkspaceState:
         self.changed_files: set[str] = set()
         self._records: list[EvidenceRecord] = []
         self._entries: list[ContextEntry] = []
+        self._validations: list[ValidationRecord] = []
 
     @property
     def records(self) -> tuple[EvidenceRecord, ...]:
@@ -45,6 +58,10 @@ class WorkspaceState:
     @property
     def entries(self) -> tuple[ContextEntry, ...]:
         return tuple(self._entries)
+
+    @property
+    def validations(self) -> tuple[ValidationRecord, ...]:
+        return tuple(self._validations)
 
     def record(self, call: ToolCall, result: ToolResult) -> ToolResult:
         metadata = dict(result.metadata)
@@ -56,6 +73,11 @@ class WorkspaceState:
 
         evidence_id = f"E{len(self._records) + 1:04d}"
         metadata.update({"evidence_id": evidence_id, "revision": self.revision})
+        validation = self._record_validation(call, result, evidence_id)
+        if validation is not None:
+            metadata.update(
+                {"validation_id": validation.id, "validation_kind": validation.kind}
+            )
         self._records.append(
             EvidenceRecord(
                 id=evidence_id,
@@ -85,6 +107,7 @@ class WorkspaceState:
             f"workspace_revision: {self.revision}",
             "changed_files: " + (", ".join(sorted(self.changed_files)) or "none"),
             f"active_entries: {len(active)}; stale_entries: {stale_count}",
+            f"validation_status: {self.validation_status()}",
         ]
         for entry in active[-max_entries:]:
             lines.append(
@@ -107,6 +130,35 @@ class WorkspaceState:
 
     def prompt_context(self) -> str:
         return self.index() + "\n\n" + self.working_context()
+
+    def validation_status(self) -> str:
+        if not self.changed_files:
+            return "not_required"
+        current = [record for record in self._validations if not record.stale]
+        if not current:
+            return "missing"
+        latest_by_command = {record.argv: record for record in current}
+        if any(not record.ok for record in latest_by_command.values()):
+            return "failed"
+        if any(record.ok for record in latest_by_command.values()):
+            return "passed"
+        return "missing"
+
+    def completion_feedback(self) -> str | None:
+        status = self.validation_status()
+        if status in {"not_required", "passed"}:
+            return None
+        if status == "failed":
+            return (
+                "Completion is not accepted: a relevant test or check still fails for "
+                "the current code. Use its execution output as feedback, correct the "
+                "implementation, and run the relevant validation again."
+            )
+        return (
+            "Completion is not accepted: the changed code has no successful relevant "
+            "validation. Run the strongest available test, build, type, lint, or syntax "
+            "check. An unrelated successful command is not completion evidence."
+        )
 
     def describe(self, identifier: str) -> str | None:
         entry = self.get_entry(identifier)
@@ -211,10 +263,17 @@ class WorkspaceState:
         elif call.name == "run_command":
             argv = call.arguments.get("argv", [])
             status = "passed" if result.ok else "failed"
+            validation_kind = classify_validation(argv) if isinstance(argv, list) else None
+            kind = "validation" if validation_kind else "command"
+            validation_id = metadata.get("validation_id")
             self._add_entry(
-                kind="command",
+                kind=kind,
                 title=" ".join(str(item) for item in argv),
-                summary=f"Command {status}; exit_code={metadata.get('exit_code')}",
+                summary=(
+                    f"{validation_id or 'unclassified'} "
+                    f"{validation_kind or 'command'} {status}; "
+                    f"exit_code={metadata.get('exit_code')}"
+                ),
                 evidence_id=evidence_id,
             )
         elif not result.ok:
@@ -232,5 +291,32 @@ class WorkspaceState:
                 scope == "." or path == scope or path.startswith(scope.rstrip("/") + "/")
                 for scope in entry.paths
             )
-            if entry.kind == "command" or covers_changed_path:
+            if entry.kind in {"command", "validation"} or covers_changed_path:
                 entry.stale = True
+        for validation in self._validations:
+            validation.stale = True
+
+    def _record_validation(
+        self,
+        call: ToolCall,
+        result: ToolResult,
+        evidence_id: str,
+    ) -> ValidationRecord | None:
+        if call.name != "run_command":
+            return None
+        argv = call.arguments.get("argv")
+        if not isinstance(argv, list) or not all(isinstance(item, str) for item in argv):
+            return None
+        kind = classify_validation(argv)
+        if kind is None:
+            return None
+        record = ValidationRecord(
+            id=f"V{len(self._validations) + 1:04d}",
+            argv=tuple(argv),
+            kind=kind,
+            ok=result.ok,
+            evidence_id=evidence_id,
+            revision=self.revision,
+        )
+        self._validations.append(record)
+        return record
