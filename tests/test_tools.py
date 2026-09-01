@@ -1,4 +1,5 @@
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -7,7 +8,9 @@ from proofcode.tools import ToolRegistry
 
 class ToolRegistryTests(unittest.TestCase):
     def setUp(self) -> None:
-        self.root = Path(__file__).parent / "runtime" / "tools"
+        self.temporary_directory = tempfile.TemporaryDirectory(dir=Path(__file__).parent)
+        self.addCleanup(self.temporary_directory.cleanup)
+        self.root = Path(self.temporary_directory.name)
         (self.root / "a.py").write_text("", encoding="utf-8")
         (self.root / "a.txt").write_text("", encoding="utf-8")
         self.registry = ToolRegistry(self.root, approve=lambda _name, _args: True)

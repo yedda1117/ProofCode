@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 from typing import Any
@@ -45,43 +46,44 @@ class ScriptedModel:
 
 class CodingAgentTests(unittest.TestCase):
     def test_changed_file_requires_successful_command_before_completion(self) -> None:
-        root = Path(__file__).parent / "runtime" / "agent"
-        (root / "value.txt").write_text("old", encoding="utf-8")
-        model = ScriptedModel(
-            [
-                tool_response(
-                    "1",
-                    "replace_text",
-                    {"path": "value.txt", "old_text": "old", "new_text": "new"},
-                ),
-                final_response("Done."),
-                tool_response(
-                    "2",
-                    "run_command",
-                    {"argv": [sys.executable, "-c", "print('ok')"]},
-                ),
-                final_response("Changed value.txt and validated it."),
-            ]
-        )
-        registry = ToolRegistry(root, approve=lambda _name, _args: True)
+        with tempfile.TemporaryDirectory(dir=Path(__file__).parent) as directory:
+            root = Path(directory)
+            (root / "value.txt").write_text("old", encoding="utf-8")
+            model = ScriptedModel(
+                [
+                    tool_response(
+                        "1",
+                        "replace_text",
+                        {"path": "value.txt", "old_text": "old", "new_text": "new"},
+                    ),
+                    final_response("Done."),
+                    tool_response(
+                        "2",
+                        "run_command",
+                        {"argv": [sys.executable, "-c", "print('ok')"]},
+                    ),
+                    final_response("Changed value.txt and validated it."),
+                ]
+            )
+            registry = ToolRegistry(root, approve=lambda _name, _args: True)
 
-        result = CodingAgent(model=model, tools=registry, max_steps=5).run("Update it")
+            result = CodingAgent(model=model, tools=registry, max_steps=5).run("Update it")
 
-        self.assertEqual(result.reason, StopReason.COMPLETED)
-        self.assertEqual(root.joinpath("value.txt").read_text(encoding="utf-8"), "new")
-        self.assertEqual(result.steps, 4)
-        self.assertIn("Completion is not accepted", str(model.seen_messages[2]))
+            self.assertEqual(result.reason, StopReason.COMPLETED)
+            self.assertEqual(root.joinpath("value.txt").read_text(encoding="utf-8"), "new")
+            self.assertEqual(result.steps, 4)
+            self.assertIn("Completion is not accepted", str(model.seen_messages[2]))
 
     def test_stops_repeated_identical_action(self) -> None:
-        root = Path(__file__).parent / "runtime" / "agent"
-        response = tool_response("1", "list_files", {"path": "."})
-        model = ScriptedModel([response, response, response])
-        registry = ToolRegistry(root, approve=lambda _name, _args: True)
+        with tempfile.TemporaryDirectory(dir=Path(__file__).parent) as directory:
+            response = tool_response("1", "list_files", {"path": "."})
+            model = ScriptedModel([response, response, response])
+            registry = ToolRegistry(Path(directory), approve=lambda _name, _args: True)
 
-        result = CodingAgent(model=model, tools=registry, max_steps=5).run("Inspect")
+            result = CodingAgent(model=model, tools=registry, max_steps=5).run("Inspect")
 
-        self.assertEqual(result.reason, StopReason.REPEATED_ACTION)
-        self.assertEqual(result.steps, 3)
+            self.assertEqual(result.reason, StopReason.REPEATED_ACTION)
+            self.assertEqual(result.steps, 3)
 
 
 if __name__ == "__main__":
