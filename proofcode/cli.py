@@ -48,7 +48,7 @@ class Console:
         print(f"│ 最大步数    {max_steps}")
         print(self.style("╰─ 模型提出操作 · Runtime 执行验证", self.DIM))
 
-    def approval(self, name: str, arguments: dict[str, Any]) -> bool:
+    def approval(self, name: str, arguments: dict[str, Any]) -> str:
         print()
         print(self.style(f"╭─ 需要人工确认 · {name}", self.BOLD, self.YELLOW))
         for key, value in arguments.items():
@@ -56,12 +56,18 @@ class Console:
             if len(rendered) > 240:
                 rendered = rendered[:237] + "..."
             print(f"│ {key:<10} {rendered}")
+        print(self.style("│ y：仅允许本次 · a：本次运行后续操作全部允许", self.DIM))
         print(self.style("╰─ 此操作可能修改工作区或执行代码", self.DIM))
         try:
-            answer = input(self.style("是否允许？[y/N] ", self.BOLD, self.YELLOW))
+            answer = input(self.style("请选择 [y/N/a] ", self.BOLD, self.YELLOW))
         except EOFError:
-            return False
-        return answer.strip().lower() in {"y", "yes"}
+            return "deny"
+        normalized = answer.strip().lower()
+        if normalized in {"a", "always"}:
+            return "always"
+        if normalized in {"y", "yes"}:
+            return "once"
+        return "deny"
 
     def event(self, kind: str, data: dict[str, Any]) -> None:
         if kind == "step":
@@ -132,10 +138,16 @@ def _parser() -> argparse.ArgumentParser:
 
 
 def _approval(approve_all: bool, console: Console):
+    approve_remaining = False
+
     def approve(name: str, arguments: dict[str, Any]) -> bool:
-        if approve_all:
+        nonlocal approve_remaining
+        if approve_all or approve_remaining:
             return True
-        return console.approval(name, arguments)
+        decision = console.approval(name, arguments)
+        if decision == "always":
+            approve_remaining = True
+        return decision in {"once", "always"}
 
     return approve
 

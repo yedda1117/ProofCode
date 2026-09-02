@@ -17,8 +17,9 @@ python -m proofcode --workspace demo/workspace --max-steps 16 "修复 auth.py：
 Expected visible sequence:
 
 1. `read_file` inspects the implementation and test.
-2. `replace_text` pauses at the yellow `需要人工确认` panel; answer `y`.
-3. The focused test also requires approval and passes.
+2. `replace_text` pauses at the yellow `需要人工确认` panel; answer `a` to
+   approve this action and automatically allow the remaining actions in this run.
+3. The focused test then runs automatically and passes.
 4. `list_context` shows the workspace revision, changed file, L1 index, L2
    summaries, and `validation_status: focused_only`.
 5. `read_context` recovers the complete focused-test output from its `E...`

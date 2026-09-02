@@ -1,8 +1,9 @@
 import io
 import unittest
 from contextlib import redirect_stdout
+from unittest.mock import patch
 
-from proofcode.cli import Console, _compact_arguments, _indent
+from proofcode.cli import Console, _approval, _compact_arguments, _indent
 from proofcode.types import StopReason
 
 
@@ -42,6 +43,22 @@ class ConsoleTests(unittest.TestCase):
             'argv=python -m unittest · cwd="."',
         )
         self.assertEqual(_indent("first\nsecond", "  "), "  first\n  second")
+
+    def test_approval_can_allow_only_once(self) -> None:
+        console = Console(color=False)
+        approve = _approval(False, console)
+        with patch("builtins.input", return_value="y"):
+            self.assertTrue(approve("replace_text", {"path": "a.py"}))
+        with patch("builtins.input", return_value=""):
+            self.assertFalse(approve("run_command", {"argv": ["pytest"]}))
+
+    def test_approval_can_allow_remaining_actions(self) -> None:
+        console = Console(color=False)
+        approve = _approval(False, console)
+        with patch("builtins.input", return_value="a"):
+            self.assertTrue(approve("replace_text", {"path": "a.py"}))
+        with patch("builtins.input", side_effect=AssertionError("must not prompt again")):
+            self.assertTrue(approve("run_command", {"argv": ["pytest"]}))
 
 
 if __name__ == "__main__":
