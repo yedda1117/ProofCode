@@ -161,28 +161,27 @@ class WorkspaceState:
     def completion_feedback(self) -> str | None:
         if not self._records:
             return (
-                "Completion is not accepted: no workspace evidence has been collected. "
-                "Inspect the relevant files or project state before making a completion claim."
+                "暂不接受完成声明：尚未取得任何工作区证据。"
+                "请先检查相关文件或项目状态，再报告任务完成。"
             )
         status = self.validation_status()
         if status in {"not_required", "passed"}:
             return None
         if status == "failed":
             return (
-                "Completion is not accepted: a recorded test or check still fails for "
-                "the current code. Use its execution output as feedback, correct the "
-                "implementation, and run validation again."
+                "暂不接受完成声明：当前代码仍有已记录的测试或检查失败。"
+                "请根据执行输出修正实现，然后重新运行验证。"
             )
         if status == "focused_only":
             return (
-                "Completion is not accepted: focused validation passed, but there is no "
-                "successful project-wide baseline validation for the current workspace "
-                "revision. Run the project's full test, build, type, lint, or syntax check."
+                "暂不接受完成声明：focused validation 已通过，但当前工作区 revision "
+                "还没有成功的项目级 baseline validation。请运行项目的完整测试、"
+                "构建、类型检查、lint 或语法检查。"
             )
         return (
-            "Completion is not accepted: the changed workspace has no successful "
-            "project-wide validation. Run the project's full test, build, type, lint, or syntax "
-            "check. An unrelated successful command is not completion evidence."
+            "暂不接受完成声明：工作区已经变化，但还没有成功的项目级 validation。"
+            "请运行项目的完整测试、构建、类型检查、lint 或语法检查；"
+            "无关的成功命令不能作为完成证据。"
         )
 
     def describe(self, identifier: str) -> str | None:

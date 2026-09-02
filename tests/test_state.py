@@ -8,7 +8,7 @@ class WorkspaceStateTests(unittest.TestCase):
     def test_completion_requires_workspace_evidence(self) -> None:
         state = WorkspaceState("Fix a.py")
 
-        self.assertIn("no workspace evidence", state.completion_feedback())
+        self.assertIn("尚未取得任何工作区证据", state.completion_feedback())
 
         state.record(
             ToolCall("call-1", "read_file", {"path": "a.py"}),
@@ -154,7 +154,7 @@ class WorkspaceStateTests(unittest.TestCase):
         )
 
         self.assertEqual(state.validation_status(), "missing")
-        self.assertIn("unrelated successful command", state.completion_feedback())
+        self.assertIn("无关的成功命令", state.completion_feedback())
 
     def test_test_result_is_recorded_as_validation(self) -> None:
         state = WorkspaceState("Change a.py")
@@ -186,7 +186,7 @@ class WorkspaceStateTests(unittest.TestCase):
         )
 
         self.assertEqual(state.validation_status(), "focused_only")
-        self.assertIn("project-wide baseline", state.completion_feedback())
+        self.assertIn("项目级 baseline", state.completion_feedback())
 
     def test_command_workspace_change_invalidates_previous_validation(self) -> None:
         state = WorkspaceState("Change generated.py")

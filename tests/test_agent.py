@@ -85,8 +85,8 @@ class CodingAgentTests(unittest.TestCase):
             self.assertEqual(result.reason, StopReason.COMPLETED)
             self.assertEqual(root.joinpath("value.txt").read_text(encoding="utf-8"), "new")
             self.assertEqual(result.steps, 6)
-            self.assertIn("Completion is not accepted", str(model.seen_messages[2]))
-            self.assertIn("unrelated successful command", str(model.seen_messages[4]))
+            self.assertIn("暂不接受完成声明", str(model.seen_messages[2]))
+            self.assertIn("无关的成功命令", str(model.seen_messages[4]))
 
     def test_failed_validation_is_returned_as_feedback_before_retry(self) -> None:
         with tempfile.TemporaryDirectory(dir=Path(__file__).parent) as directory:
@@ -132,7 +132,7 @@ class CodingAgentTests(unittest.TestCase):
 
             self.assertEqual(result.reason, StopReason.COMPLETED)
             self.assertEqual(result.steps, 6)
-            self.assertIn("recorded test or check still fails", str(model.seen_messages[3]))
+            self.assertIn("测试或检查失败", str(model.seen_messages[3]))
 
     def test_stops_repeated_identical_action(self) -> None:
         with tempfile.TemporaryDirectory(dir=Path(__file__).parent) as directory:

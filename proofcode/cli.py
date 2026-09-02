@@ -42,49 +42,49 @@ class Console:
 
     def banner(self, *, workspace: Path, model: str, max_steps: int) -> None:
         print()
-        print(self.style("╭─ ProofCode · evidence-driven coding agent", self.BOLD, self.CYAN))
-        print(f"│ workspace  {workspace}")
-        print(f"│ model      {model}")
-        print(f"│ max steps  {max_steps}")
-        print(self.style("╰─ model proposes · runtime verifies", self.DIM))
+        print(self.style("╭─ ProofCode · 执行证据驱动的编程智能体", self.BOLD, self.CYAN))
+        print(f"│ 工作区      {workspace}")
+        print(f"│ 模型        {model}")
+        print(f"│ 最大步数    {max_steps}")
+        print(self.style("╰─ 模型提出操作 · Runtime 执行验证", self.DIM))
 
     def approval(self, name: str, arguments: dict[str, Any]) -> bool:
         print()
-        print(self.style(f"╭─ APPROVAL REQUIRED · {name}", self.BOLD, self.YELLOW))
+        print(self.style(f"╭─ 需要人工确认 · {name}", self.BOLD, self.YELLOW))
         for key, value in arguments.items():
             rendered = json.dumps(value, ensure_ascii=False)
             if len(rendered) > 240:
                 rendered = rendered[:237] + "..."
             print(f"│ {key:<10} {rendered}")
-        print(self.style("╰─ this action can change state or execute code", self.DIM))
+        print(self.style("╰─ 此操作可能修改工作区或执行代码", self.DIM))
         try:
-            answer = input(self.style("Allow this action? [y/N] ", self.BOLD, self.YELLOW))
+            answer = input(self.style("是否允许？[y/N] ", self.BOLD, self.YELLOW))
         except EOFError:
             return False
         return answer.strip().lower() in {"y", "yes"}
 
     def event(self, kind: str, data: dict[str, Any]) -> None:
         if kind == "step":
-            label = f" STEP {data['step']:02d} "
+            label = f" 步骤 {data['step']:02d} "
             print("\n" + self.style(f"━━{label}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", self.BOLD, self.BLUE))
         elif kind == "tool_call":
-            print(self.style(f"◆ TOOL  {data['name']}", self.BOLD, self.CYAN))
+            print(self.style(f"◆ 工具  {data['name']}", self.BOLD, self.CYAN))
             print("  " + _compact_arguments(data["arguments"]))
         elif kind == "tool_result":
             if data["ok"]:
-                print(self.style("✓ RESULT", self.BOLD, self.GREEN))
+                print(self.style("✓ 执行成功", self.BOLD, self.GREEN))
             else:
-                print(self.style("✗ RESULT", self.BOLD, self.RED))
+                print(self.style("✗ 执行失败", self.BOLD, self.RED))
             print(_indent(str(data["result"]), "  "))
         elif kind == "verification_rejected":
-            print(self.style("◇ COMPLETION GATE · CONTINUE", self.BOLD, self.YELLOW))
+            print(self.style("◇ 完成门控 · 证据不足，继续执行", self.BOLD, self.YELLOW))
             print(_indent(data["reason"], "  "))
 
     def final(self, reason: StopReason, answer: str) -> None:
         if reason == StopReason.COMPLETED:
-            heading = self.style("✓ COMPLETED · evidence gate satisfied", self.BOLD, self.GREEN)
+            heading = self.style("✓ 任务完成 · 已满足执行证据门控", self.BOLD, self.GREEN)
         else:
-            heading = self.style(f"■ STOPPED · {reason.value}", self.BOLD, self.RED)
+            heading = self.style(f"■ 任务停止 · {reason.value}", self.BOLD, self.RED)
         print(f"\n{heading}\n{answer}")
 
 
@@ -108,25 +108,25 @@ def _indent(value: str, prefix: str) -> str:
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="proofcode",
-        description="Run a coding agent in a local workspace.",
+        description="在本地工作区运行 ProofCode 编程智能体。",
     )
-    parser.add_argument("task", nargs="?", help="Programming task. Prompts when omitted.")
-    parser.add_argument("--workspace", default=".", help="Workspace directory")
-    parser.add_argument("--max-steps", type=int, default=20, help="Maximum model calls")
+    parser.add_argument("task", nargs="?", help="编程任务；省略时将交互式询问")
+    parser.add_argument("--workspace", default=".", help="工作区目录")
+    parser.add_argument("--max-steps", type=int, default=20, help="最大模型调用次数")
     parser.add_argument(
         "--approve-all",
         action="store_true",
-        help="Run write and command tools without interactive confirmation",
+        help="无需交互确认，直接允许写操作和命令执行",
     )
     parser.add_argument(
         "--no-trajectory",
         action="store_true",
-        help="Do not write a JSONL run trajectory under .proofcode/runs",
+        help="不在 .proofcode/runs 下保存 JSONL 运行轨迹",
     )
     parser.add_argument(
         "--no-color",
         action="store_true",
-        help="Disable ANSI colors while keeping structured output",
+        help="关闭 ANSI 颜色，但保留结构化输出",
     )
     return parser
 
@@ -145,11 +145,11 @@ def main(argv: list[str] | None = None) -> int:
     task = args.task
     if not task:
         try:
-            task = input("Task: ").strip()
+            task = input("请输入任务：").strip()
         except EOFError:
             task = ""
     if not task:
-        print("A non-empty task is required.", file=sys.stderr)
+        print("必须提供非空任务。", file=sys.stderr)
         return 2
 
     try:
@@ -158,7 +158,7 @@ def main(argv: list[str] | None = None) -> int:
             max_steps=args.max_steps,
         )
     except ConfigurationError as exc:
-        print(f"Configuration error: {exc}", file=sys.stderr)
+        print(f"配置错误：{exc}", file=sys.stderr)
         return 2
 
     model = OpenAICompatibleModel(
@@ -195,7 +195,7 @@ def main(argv: list[str] | None = None) -> int:
                 "max_steps": settings.max_steps,
             },
         )
-        print(f"[trajectory] {recorder.path}")
+        print(f"[运行轨迹] {recorder.path}")
     result = CodingAgent(
         model=model,
         tools=tools,

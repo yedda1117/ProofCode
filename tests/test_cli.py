@@ -21,9 +21,9 @@ class ConsoleTests(unittest.TestCase):
 
         rendered = output.getvalue()
         self.assertNotIn("\033[", rendered)
-        self.assertIn("STEP 02", rendered)
-        self.assertIn("◆ TOOL  run_command", rendered)
-        self.assertIn("✓ COMPLETED", rendered)
+        self.assertIn("步骤 02", rendered)
+        self.assertIn("◆ 工具  run_command", rendered)
+        self.assertIn("✓ 任务完成", rendered)
 
     def test_color_console_wraps_semantic_status_with_ansi(self) -> None:
         output = io.StringIO()
@@ -34,7 +34,7 @@ class ConsoleTests(unittest.TestCase):
             )
 
         self.assertIn("\033[", output.getvalue())
-        self.assertIn("COMPLETION GATE", output.getvalue())
+        self.assertIn("完成门控", output.getvalue())
 
     def test_argument_compaction_and_indentation(self) -> None:
         self.assertEqual(
