@@ -1,4 +1,5 @@
 from pathlib import Path
+import shutil
 
 
 AUTH_SOURCE = '''def extract_bearer_token(header: str | None) -> str | None:
@@ -26,4 +27,9 @@ def authorize(headers: dict[str, str]) -> bool:
 workspace = Path(__file__).parent / "workspace"
 workspace.joinpath("auth.py").write_text(AUTH_SOURCE, encoding="utf-8")
 workspace.joinpath("middleware.py").write_text(MIDDLEWARE_SOURCE, encoding="utf-8")
-print("Multi-file demo reset: parser and middleware contain intentional integration bugs.")
+runtime_state = workspace / ".proofcode"
+if runtime_state.exists():
+    shutil.rmtree(runtime_state)
+print(
+    "Multi-file demo reset: source bugs restored and prior ProofCode memory/trajectory cleared."
+)
