@@ -380,8 +380,6 @@ ProofCode 限制所有工具路径不能逃逸工作区；命令使用 argv 数�
 - **CodePlan** — repository oracle 将验证诊断转化为下一轮修改并控制终止 · [Paper](https://arxiv.org/abs/2309.12499)
 - **Agentless** — 软件问题定位、修复与验证的阶段化思路 · [Paper](https://arxiv.org/abs/2407.01489)
 
-ProofCode 没有复制上述项目的 Agent 实现，也不宣称具有 GenericAgent 的全部通用能力。它面向 Coding Agent 实现了 working-memory anchor、项目/全局 L1→L2/L3 按需路由、L4 会话归档与验证后经验固化；当前全局记忆只接纳可迁移的 SOP 与 Skill，仍未实现自动调度反思、跨项目事实共享或 CodePlan 的依赖图。
-
 <br/>
 
 <div align="center">
