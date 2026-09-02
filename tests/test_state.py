@@ -16,6 +16,15 @@ class WorkspaceStateTests(unittest.TestCase):
         )
         self.assertIsNone(state.completion_feedback())
 
+    def test_context_navigation_alone_is_not_workspace_evidence(self) -> None:
+        state = WorkspaceState("Fix a.py")
+        state.record(
+            ToolCall("call-1", "list_context", {}),
+            ToolResult(True, "empty index", {}),
+        )
+
+        self.assertIn("尚未取得任何工作区证据", state.completion_feedback())
+
     def test_records_evidence_with_stable_ids(self) -> None:
         state = WorkspaceState()
 
@@ -118,6 +127,47 @@ class WorkspaceStateTests(unittest.TestCase):
         self.assertIn("C0001", index)
         self.assertIn("E0001", index)
         self.assertNotIn("secret raw source body", index)
+
+    def test_omitted_early_entry_remains_discoverable_through_catalog(self) -> None:
+        state = WorkspaceState("Inspect a long trajectory")
+        for number in range(15):
+            state.record(
+                ToolCall(f"call-{number}", "read_file", {"path": f"module_{number}.py"}),
+                ToolResult(
+                    True,
+                    f"content for unique-marker-{number}",
+                    {
+                        "path": f"module_{number}.py",
+                        "start": 1,
+                        "end": 1,
+                        "content_hash": f"{number:064x}",
+                    },
+                ),
+            )
+
+        index = state.index(max_entries=12)
+        matches = state.search_context("unique-marker-0")
+
+        self.assertNotIn("C0001", index)
+        self.assertEqual(matches[0]["id"], "E0001")
+        recovered = state.describe(matches[0]["id"])
+        self.assertIn("unique-marker-0", recovered or "")
+
+    def test_context_search_excludes_stale_evidence_unless_requested(self) -> None:
+        state = WorkspaceState("Change a.py")
+        state.record(
+            ToolCall("call-1", "read_file", {"path": "a.py"}),
+            ToolResult(True, "old-marker", {"path": "a.py", "start": 1, "end": 1}),
+        )
+        state.record(
+            ToolCall("call-2", "replace_text", {"path": "a.py"}),
+            ToolResult(True, "updated", {"changed": True, "path": "a.py"}),
+        )
+
+        self.assertEqual(state.search_context("old-marker"), ())
+        historical = state.search_context("old-marker", include_stale=True)
+        self.assertEqual(historical[0]["id"], "E0001")
+        self.assertTrue(historical[0]["stale"])
 
     def test_search_context_becomes_stale_when_covered_path_changes(self) -> None:
         state = WorkspaceState("Find and change a symbol")

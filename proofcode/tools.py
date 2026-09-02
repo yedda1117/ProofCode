@@ -10,7 +10,9 @@ from pathlib import Path
 from typing import Any, Callable
 
 from proofcode.errors import ApprovalDenied, PathViolation, ToolError
+from proofcode.memory import LongTermMemoryStore
 from proofcode.patching import apply_unified_hunks
+from proofcode.project import discover_validation_policy
 from proofcode.state import WorkspaceState
 from proofcode.types import ToolResult
 
@@ -71,11 +73,28 @@ class ToolRegistry:
         self.output_limit = output_limit
         self.command_timeout = command_timeout
         self.approve = approve or (lambda _name, _args: False)
+        self.validation_policy = discover_validation_policy(self.workspace.root)
+        self.memory_store = LongTermMemoryStore(self.workspace.root)
         self.state: WorkspaceState | None = None
         self._tools = self._build_tools()
 
     def attach_state(self, state: WorkspaceState) -> None:
         self.state = state
+
+    def commit_memory(self, *, run_id: str) -> tuple[str, ...]:
+        if self.state is None:
+            return ()
+        for candidate in self.state.memory_candidates:
+            self.state.validate_memory_candidate(candidate)
+            if candidate.kind == "skill":
+                if candidate.source_path is None:
+                    raise ValueError(f"candidate {candidate.id} has no skill source")
+                source = self.workspace.resolve(candidate.source_path, must_exist=True)
+                if source.read_text(encoding="utf-8").rstrip() != candidate.content.rstrip():
+                    raise ValueError(
+                        f"candidate {candidate.id} skill source changed after staging"
+                    )
+        return self.memory_store.commit(self.state.memory_candidates, run_id=run_id)
 
     def schemas(self) -> list[dict[str, Any]]:
         return [tool.schema() for tool in self._tools.values()]
@@ -187,6 +206,81 @@ class ToolRegistry:
                 self._show_diff,
             ),
             Tool(
+                "update_working_memory",
+                (
+                    "Replace the compact working checkpoint after material discoveries, "
+                    "edits, or validation feedback. Each decision-relevant item must cite "
+                    "current E evidence; the runtime derives its invalidation scope."
+                ),
+                self._object_schema(
+                    {
+                        "goal": {"type": "string", "maxLength": 360},
+                        "items": {
+                            "type": "array",
+                            "minItems": 1,
+                            "maxItems": 16,
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "kind": {
+                                        "type": "string",
+                                        "enum": [
+                                            "finding",
+                                            "constraint",
+                                            "hypothesis",
+                                            "progress",
+                                            "risk",
+                                        ],
+                                    },
+                                    "content": {"type": "string", "maxLength": 360},
+                                    "evidence_ids": {
+                                        "type": "array",
+                                        "items": {"type": "string"},
+                                    },
+                                },
+                                "required": ["kind", "content", "evidence_ids"],
+                                "additionalProperties": False,
+                            },
+                        },
+                        "next_action": {"type": "string", "maxLength": 360},
+                    },
+                    ["goal", "items", "next_action"],
+                ),
+                self._update_working_memory,
+            ),
+            Tool(
+                "propose_memory",
+                (
+                    "Stage one cross-task fact, SOP, or Python skill for commit only after "
+                    "the task passes the completion gate. Facts require successful current "
+                    "evidence; SOPs and skills also require project validation."
+                ),
+                self._object_schema(
+                    {
+                        "kind": {
+                            "type": "string",
+                            "enum": ["fact", "sop", "skill"],
+                        },
+                        "title": {"type": "string", "maxLength": 100},
+                        "content": {"type": "string", "maxLength": 2000},
+                        "source_path": {"type": "string"},
+                        "keywords": {
+                            "type": "array",
+                            "minItems": 1,
+                            "maxItems": 8,
+                            "items": {"type": "string", "maxLength": 40},
+                        },
+                        "evidence_ids": {
+                            "type": "array",
+                            "minItems": 1,
+                            "items": {"type": "string"},
+                        },
+                    },
+                    ["kind", "title", "keywords", "evidence_ids"],
+                ),
+                self._propose_memory,
+            ),
+            Tool(
                 "run_command",
                 "Run a local process without a shell. Pass the executable and every argument as separate argv items.",
                 self._object_schema(
@@ -207,6 +301,23 @@ class ToolRegistry:
                 self._list_context,
             ),
             Tool(
+                "search_context",
+                (
+                    "Search current or omitted context entries and raw evidence by exact text. "
+                    "Returns C/E identifiers and offsets for read_context without loading the "
+                    "whole history."
+                ),
+                self._object_schema(
+                    {
+                        "query": {"type": "string"},
+                        "include_stale": {"type": "boolean"},
+                        "max_results": {"type": "integer"},
+                    },
+                    ["query"],
+                ),
+                self._search_context,
+            ),
+            Tool(
                 "read_context",
                 "Read a bounded chunk of one context entry or raw evidence record by its C or E identifier.",
                 self._object_schema(
@@ -219,11 +330,30 @@ class ToolRegistry:
                 ),
                 self._read_context,
             ),
+            Tool(
+                "search_memory",
+                "Search persistent cross-task L2 facts and L3 SOPs/skills by keyword.",
+                self._object_schema(
+                    {
+                        "query": {"type": "string"},
+                        "max_results": {"type": "integer"},
+                    },
+                    ["query"],
+                ),
+                self._search_memory,
+            ),
+            Tool(
+                "read_memory",
+                "Read one persistent L2 fact or L3 SOP/skill selected from the L1 index.",
+                self._object_schema({"id": {"type": "string"}}, ["id"]),
+                self._read_memory,
+            ),
         ]
         return {tool.name: tool for tool in tools}
 
     def _list_files(self, args: dict[str, Any]) -> ToolResult:
         path = self.workspace.resolve(args["path"], must_exist=True)
+        scope = self.workspace.relative(path)
         if not path.is_dir():
             raise ToolError(f"not a directory: {args['path']}")
         limit = self._bounded_int(args.get("max_entries", 200), 1, 1_000, "max_entries")
@@ -239,7 +369,7 @@ class ToolRegistry:
         return ToolResult(
             True,
             "\n".join(entries) + suffix,
-            {"entries": len(entries), "path": args["path"]},
+            {"entries": len(entries), "path": scope},
         )
 
     def _search_text(self, args: dict[str, Any]) -> ToolResult:
@@ -247,6 +377,7 @@ class ToolRegistry:
         if not isinstance(query, str) or not query:
             raise ToolError("query must be a non-empty string")
         path = self.workspace.resolve(args["path"], must_exist=True)
+        scope = self.workspace.relative(path)
         pattern = args.get("glob", "*")
         if not isinstance(pattern, str):
             raise ToolError("glob must be a string")
@@ -270,7 +401,7 @@ class ToolRegistry:
                             True,
                             "\n".join(matches) + "\n[result limit reached]",
                             {
-                                "path": args["path"],
+                                "path": scope,
                                 "query": query,
                                 "matches": len(matches),
                                 "limit_reached": True,
@@ -279,11 +410,12 @@ class ToolRegistry:
         return ToolResult(
             True,
             "\n".join(matches) if matches else "no matches",
-            {"path": args["path"], "query": query, "matches": len(matches)},
+            {"path": scope, "query": query, "matches": len(matches)},
         )
 
     def _read_file(self, args: dict[str, Any]) -> ToolResult:
         path = self.workspace.resolve(args["path"], must_exist=True)
+        relative = self.workspace.relative(path)
         if not path.is_file():
             raise ToolError(f"not a file: {args['path']}")
         lines = path.read_text(encoding="utf-8").splitlines()
@@ -292,7 +424,7 @@ class ToolRegistry:
                 True,
                 "[empty file]",
                 {
-                    "path": args["path"],
+                    "path": relative,
                     "start": 0,
                     "end": 0,
                     "content_hash": self._file_hash(path),
@@ -308,7 +440,7 @@ class ToolRegistry:
             True,
             content,
             {
-                "path": args["path"],
+                "path": relative,
                 "start": start,
                 "end": end,
                 "content_hash": self._file_hash(path),
@@ -317,6 +449,7 @@ class ToolRegistry:
 
     def _replace_text(self, args: dict[str, Any]) -> ToolResult:
         path = self.workspace.resolve(args["path"], must_exist=True)
+        relative = self.workspace.relative(path)
         if not path.is_file():
             raise ToolError(f"not a file: {args['path']}")
         old_text = args["old_text"]
@@ -336,7 +469,7 @@ class ToolRegistry:
             f"updated {args['path']}",
             {
                 "changed": True,
-                "path": args["path"],
+                "path": relative,
                 "before_hash": before_hash,
                 "after_hash": self._file_hash(path),
             },
@@ -344,6 +477,7 @@ class ToolRegistry:
 
     def _create_file(self, args: dict[str, Any]) -> ToolResult:
         path = self.workspace.resolve(args["path"])
+        relative = self.workspace.relative(path)
         content = args["content"]
         if not isinstance(content, str):
             raise ToolError("content must be a string")
@@ -356,13 +490,14 @@ class ToolRegistry:
             f"created {args['path']}",
             {
                 "changed": True,
-                "path": args["path"],
+                "path": relative,
                 "after_hash": self._file_hash(path),
             },
         )
 
     def _apply_patch(self, args: dict[str, Any]) -> ToolResult:
         path = self.workspace.resolve(args["path"], must_exist=True)
+        relative = self.workspace.relative(path)
         if not path.is_file():
             raise ToolError(f"not a file: {args['path']}")
         if path.stat().st_size > 2_000_000:
@@ -378,7 +513,7 @@ class ToolRegistry:
             f"patched {args['path']}",
             {
                 "changed": True,
-                "path": args["path"],
+                "path": relative,
                 "before_hash": before_hash,
                 "after_hash": self._file_hash(path),
             },
@@ -431,6 +566,68 @@ class ToolRegistry:
             True,
             content,
             {"path": relative or ".", "untracked": len(untracked)},
+        )
+
+    def _update_working_memory(self, args: dict[str, Any]) -> ToolResult:
+        if self.state is None:
+            raise ToolError("context state is not attached")
+        try:
+            content = self.state.update_working_memory(
+                goal=args["goal"],
+                items=args["items"],
+                next_action=args["next_action"],
+            )
+        except ValueError as exc:
+            raise ToolError(str(exc)) from exc
+        return ToolResult(
+            True,
+            content,
+            {
+                "checkpoint_revision": self.state.checkpoint_revision,
+                "working_memory_items": len(self.state.working_memory),
+            },
+        )
+
+    def _propose_memory(self, args: dict[str, Any]) -> ToolResult:
+        if self.state is None:
+            raise ToolError("context state is not attached")
+        kind = args["kind"]
+        content = args.get("content", "")
+        source_path = args.get("source_path")
+        if kind == "skill":
+            if not isinstance(source_path, str) or not source_path:
+                raise ToolError("skill memory requires source_path")
+            path = self.workspace.resolve(source_path, must_exist=True)
+            if not path.is_file() or path.suffix.casefold() != ".py":
+                raise ToolError("skill source_path must be a Python file")
+            if path.stat().st_size > 20_000:
+                raise ToolError("skill source file exceeds 20 KB")
+            content = path.read_text(encoding="utf-8")
+            source_path = self.workspace.relative(path)
+        elif not isinstance(content, str) or not content.strip():
+            raise ToolError("fact and sop memory require content")
+        try:
+            candidate = self.state.propose_memory(
+                kind=kind,
+                title=args["title"],
+                content=content,
+                keywords=args["keywords"],
+                evidence_ids=args["evidence_ids"],
+                source_path=source_path,
+            )
+        except ValueError as exc:
+            raise ToolError(str(exc)) from exc
+        return ToolResult(
+            True,
+            (
+                f"staged {candidate.id} [{candidate.kind}] {candidate.title}; "
+                "it will be committed only if this run completes successfully"
+            ),
+            {
+                "candidate_id": candidate.id,
+                "memory_kind": candidate.kind,
+                "source_path": candidate.source_path,
+            },
         )
 
     def _run_command(self, args: dict[str, Any]) -> ToolResult:
@@ -524,6 +721,40 @@ class ToolRegistry:
             raise ToolError("context state is not attached")
         return ToolResult(True, self.state.prompt_context())
 
+    def _search_context(self, args: dict[str, Any]) -> ToolResult:
+        if self.state is None:
+            raise ToolError("context state is not attached")
+        query = args["query"]
+        if not isinstance(query, str) or not query.strip():
+            raise ToolError("query must be a non-empty string")
+        include_stale = args.get("include_stale", False)
+        if not isinstance(include_stale, bool):
+            raise ToolError("include_stale must be a boolean")
+        limit = self._bounded_int(args.get("max_results", 20), 1, 100, "max_results")
+        matches = self.state.search_context(
+            query,
+            include_stale=include_stale,
+            max_results=limit,
+        )
+        if not matches:
+            return ToolResult(
+                True,
+                "[no matching context evidence]",
+                {"query": query, "matches": [], "count": 0},
+            )
+        lines = []
+        for match in matches:
+            status = "stale" if match["stale"] else "active"
+            lines.append(
+                f"{match['id']} [{match['kind']}] r{match['revision']} {status} "
+                f"read_offset={match['offset']}\n  {match['snippet']}"
+            )
+        return ToolResult(
+            True,
+            "\n".join(lines),
+            {"query": query, "matches": list(matches), "count": len(matches)},
+        )
+
     def _read_context(self, args: dict[str, Any]) -> ToolResult:
         if self.state is None:
             raise ToolError("context state is not attached")
@@ -547,6 +778,30 @@ class ToolRegistry:
                 "next_offset": end if end < len(content) else None,
             },
         )
+
+    def _search_memory(self, args: dict[str, Any]) -> ToolResult:
+        query = args["query"]
+        if not isinstance(query, str) or not query.strip():
+            raise ToolError("memory query must be a non-empty string")
+        limit = self._bounded_int(args.get("max_results", 10), 1, 30, "max_results")
+        matches = self.memory_store.search(query, max_results=limit)
+        if not matches:
+            return ToolResult(True, "[no matching long-term memory]", {"count": 0})
+        content = "\n".join(
+            f"{item['id']} [{item['kind']}] {item['title']} "
+            f"keywords={','.join(item['keywords'])}"
+            for item in matches
+        )
+        return ToolResult(True, content, {"count": len(matches)})
+
+    def _read_memory(self, args: dict[str, Any]) -> ToolResult:
+        memory_id = args["id"]
+        if not isinstance(memory_id, str) or not memory_id.strip():
+            raise ToolError("memory id must be a non-empty string")
+        content = self.memory_store.read(memory_id.strip())
+        if content is None:
+            raise ToolError(f"unknown active memory id: {memory_id}")
+        return ToolResult(True, content, {"memory_id": memory_id.strip()})
 
     def _truncate(self, content: str) -> tuple[str, bool]:
         if len(content) <= self.output_limit:

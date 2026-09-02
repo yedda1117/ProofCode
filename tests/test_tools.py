@@ -157,7 +157,7 @@ class ToolRegistryTests(unittest.TestCase):
         evidence = self.registry.execute("read_context", {"id": "E0001"})
 
         self.assertTrue(index.ok)
-        self.assertIn("L1 CONTEXT INDEX", index.content)
+        self.assertIn("RUNTIME STATE", index.content)
         self.assertTrue(evidence.ok)
         self.assertIn("1 | source", evidence.content)
 
@@ -194,6 +194,31 @@ class ToolRegistryTests(unittest.TestCase):
         self.assertEqual(len(first.content), 100)
         self.assertEqual(second.metadata["offset"], 100)
         self.assertGreater(second.metadata["total_chars"], 500)
+
+    def test_search_context_routes_to_hidden_raw_evidence(self) -> None:
+        marker = "ROOT_CAUSE_AUTH_401"
+        state = WorkspaceState("Inspect a long failure")
+        state.record(
+            ToolCall("call-1", "run_command", {"argv": ["pytest"]}),
+            ToolResult(
+                False,
+                "visible head\n...[omitted]...\nvisible tail",
+                {"exit_code": 1},
+                raw_content="x" * 500 + marker + "y" * 500,
+            ),
+        )
+        self.registry.attach_state(state)
+
+        search = self.registry.execute("search_context", {"query": marker})
+        match = next(item for item in search.metadata["matches"] if item["id"] == "E0001")
+        recovered = self.registry.execute(
+            "read_context",
+            {"id": match["id"], "offset": match["offset"], "max_chars": 400},
+        )
+
+        self.assertTrue(search.ok)
+        self.assertIn("E0001", search.content)
+        self.assertIn(marker, recovered.content)
 
 
 if __name__ == "__main__":

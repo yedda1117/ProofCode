@@ -110,6 +110,22 @@ def validation_scope(argv: list[str]) -> str | None:
     return "project"
 
 
+def normalized_validation_argv(argv: tuple[str, ...] | list[str]) -> tuple[str, ...]:
+    if not argv:
+        return ()
+    executable = Path(argv[0]).name.lower()
+    if executable in {"python.exe", "python3", "py", "py.exe"}:
+        executable = "python"
+    elif executable.endswith(".cmd") and executable[:-4] in {
+        "npm",
+        "pnpm",
+        "yarn",
+        "mvnw",
+    }:
+        executable = executable[:-4]
+    return (executable, *(argument.lower() for argument in argv[1:]))
+
+
 def _has_test_selector(arguments: list[str]) -> bool:
     selector_flags = {
         "-k",

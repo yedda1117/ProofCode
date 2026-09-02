@@ -162,10 +162,60 @@ class CodingAgentTests(unittest.TestCase):
             self.assertEqual(result.reason, StopReason.COMPLETED)
             first_context = str(model.seen_messages[0])
             second_context = str(model.seen_messages[1])
-            self.assertIn("L1 CONTEXT INDEX", first_context)
+            self.assertIn("LONG-TERM L1 MEMORY INDEX", first_context)
+            self.assertIn("RUNTIME STATE", first_context)
             self.assertIn("no verified workspace observations", first_context)
             self.assertIn("C0001", second_context)
             self.assertIn("E0001", second_context)
+
+    def test_successful_run_consolidates_memory_for_the_next_run(self) -> None:
+        with tempfile.TemporaryDirectory(dir=Path(__file__).parent) as directory:
+            root = Path(directory)
+            (root / "pyproject.toml").write_text(
+                '[tool.pytest.ini_options]\ntestpaths = ["tests"]\n',
+                encoding="utf-8",
+            )
+            first_model = ScriptedModel(
+                [
+                    tool_response("1", "read_file", {"path": "pyproject.toml"}),
+                    tool_response(
+                        "2",
+                        "propose_memory",
+                        {
+                            "kind": "fact",
+                            "title": "Test directory",
+                            "content": "Project tests are discovered under tests/.",
+                            "keywords": ["pytest", "tests"],
+                            "evidence_ids": ["E0001"],
+                        },
+                    ),
+                    final_response("Inspected the test configuration."),
+                ]
+            )
+            first_registry = ToolRegistry(root, approve=lambda _name, _args: True)
+
+            first_result = CodingAgent(
+                model=first_model,
+                tools=first_registry,
+                run_id="run-first",
+            ).run("Inspect the test configuration")
+
+            self.assertEqual(first_result.reason, StopReason.COMPLETED)
+            second_model = ScriptedModel(
+                [tool_response("3", "read_file", {"path": "pyproject.toml"}), final_response("Done.")]
+            )
+            second_registry = ToolRegistry(root, approve=lambda _name, _args: True)
+
+            second_result = CodingAgent(
+                model=second_model,
+                tools=second_registry,
+                run_id="run-second",
+            ).run("Check how tests are organized")
+
+            self.assertEqual(second_result.reason, StopReason.COMPLETED)
+            second_run_initial_context = str(second_model.seen_messages[0])
+            self.assertIn("F0001 [fact] Test directory", second_run_initial_context)
+            self.assertNotIn("Project tests are discovered under tests/", second_run_initial_context)
 
 
 if __name__ == "__main__":

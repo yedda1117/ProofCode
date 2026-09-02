@@ -55,8 +55,9 @@ class Conversation:
                     "role": "system",
                     "content": (
                         f"{omitted} earlier tool exchange(s) were omitted to fit the "
-                        "context budget. Re-read files or rerun commands when evidence "
-                        "from those exchanges is needed."
+                        "context budget. Use the working checkpoint for current decisions; "
+                        "when exact earlier evidence is needed, locate it with "
+                        "search_context and recover it with read_context."
                     ),
                 }
             )

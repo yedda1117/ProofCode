@@ -7,7 +7,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from proofcode.agent import CodingAgent
+from proofcode.agent import SYSTEM_PROMPT, CodingAgent
 from proofcode.config import Settings
 from proofcode.errors import ConfigurationError
 from proofcode.model import OpenAICompatibleModel
@@ -40,12 +40,20 @@ class Console:
             return text
         return "".join(codes) + text + self.RESET
 
-    def banner(self, *, workspace: Path, model: str, max_steps: int) -> None:
+    def banner(
+        self,
+        *,
+        workspace: Path,
+        model: str,
+        max_steps: int,
+        validation_policy: str,
+    ) -> None:
         print()
         print(self.style("╭─ ProofCode · 执行证据驱动的编程智能体", self.BOLD, self.CYAN))
         print(f"│ 工作区      {workspace}")
         print(f"│ 模型        {model}")
         print(f"│ 最大步数    {max_steps}")
+        print(f"│ 验证策略    {validation_policy}")
         print(self.style("╰─ 模型提出操作 · Runtime 执行验证", self.DIM))
 
     def approval(self, name: str, arguments: dict[str, Any]) -> str:
@@ -74,7 +82,17 @@ class Console:
             label = f" 步骤 {data['step']:02d} "
             print("\n" + self.style(f"━━{label}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", self.BOLD, self.BLUE))
         elif kind == "tool_call":
-            print(self.style(f"◆ 工具  {data['name']}", self.BOLD, self.CYAN))
+            labels = {
+                "update_working_memory": "更新工作检查点",
+                "propose_memory": "提交长期记忆候选",
+                "run_command": "执行本地命令",
+                "search_context": "检索历史证据",
+                "read_context": "恢复原始证据",
+                "search_memory": "检索长期记忆",
+                "read_memory": "读取长期记忆",
+            }
+            label = labels.get(data["name"], data["name"])
+            print(self.style(f"◆ {label}", self.BOLD, self.CYAN))
             print("  " + _compact_arguments(data["arguments"]))
         elif kind == "tool_result":
             if data["ok"]:
@@ -82,9 +100,33 @@ class Console:
             else:
                 print(self.style("✗ 执行失败", self.BOLD, self.RED))
             print(_indent(str(data["result"]), "  "))
+            metadata = data.get("metadata") or {}
+            evidence_id = metadata.get("evidence_id")
+            revision = metadata.get("workspace_revision", metadata.get("revision"))
+            validation = metadata.get("validation_status")
+            state = []
+            if evidence_id:
+                state.append(f"证据 {evidence_id}")
+            if revision is not None:
+                state.append(f"工作区 r{revision}")
+            if validation:
+                state.append(f"验证 {validation}")
+            if state:
+                print(self.style("  └ " + " · ".join(state), self.DIM))
         elif kind == "verification_rejected":
             print(self.style("◇ 完成门控 · 证据不足，继续执行", self.BOLD, self.YELLOW))
             print(_indent(data["reason"], "  "))
+        elif kind == "memory_committed":
+            print(
+                self.style(
+                    "◇ 长期记忆已固化 · " + ", ".join(data["ids"]),
+                    self.BOLD,
+                    self.GREEN,
+                )
+            )
+        elif kind == "memory_error":
+            print(self.style("◇ 长期记忆写入失败", self.BOLD, self.YELLOW))
+            print(_indent(data["error"], "  "))
 
     def final(self, reason: StopReason, answer: str) -> None:
         if reason == StopReason.COMPLETED:
@@ -179,16 +221,17 @@ def main(argv: list[str] | None = None) -> int:
         model=settings.model,
     )
     console = Console(color=False if args.no_color else None)
-    console.banner(
-        workspace=settings.workspace,
-        model=settings.model,
-        max_steps=settings.max_steps,
-    )
     tools = ToolRegistry(
         settings.workspace,
         output_limit=settings.tool_output_chars,
         command_timeout=settings.command_timeout,
         approve=_approval(args.approve_all, console),
+    )
+    console.banner(
+        workspace=settings.workspace,
+        model=settings.model,
+        max_steps=settings.max_steps,
+        validation_policy=tools.validation_policy.prompt_line(),
     )
     recorder = None if args.no_trajectory else TrajectoryRecorder.create(settings.workspace)
 
@@ -202,6 +245,7 @@ def main(argv: list[str] | None = None) -> int:
             "run_started",
             {
                 "task": task,
+                "system_prompt": SYSTEM_PROMPT,
                 "workspace": str(settings.workspace),
                 "model": settings.model,
                 "max_steps": settings.max_steps,
@@ -213,6 +257,7 @@ def main(argv: list[str] | None = None) -> int:
         tools=tools,
         max_steps=settings.max_steps,
         context_chars=settings.context_chars,
+        run_id=recorder.run_id if recorder is not None else None,
         on_event=emit,
     ).run(task)
     if recorder is not None:

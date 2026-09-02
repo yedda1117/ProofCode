@@ -4,7 +4,7 @@
   <br/>
 
   <a href="#-quick-start"><img src="https://img.shields.io/badge/Python-3.11+-3776AB?style=for-the-badge&logo=python&logoColor=white" alt="Python 3.11+" /></a>
-  <a href="#-testing--evaluation"><img src="https://img.shields.io/badge/Tests-51%20Passing-22C55E?style=for-the-badge&logo=pytest&logoColor=white" alt="51 tests passing" /></a>
+  <a href="#-testing--evaluation"><img src="https://img.shields.io/badge/Tests-66%20Passing-22C55E?style=for-the-badge&logo=pytest&logoColor=white" alt="66 tests passing" /></a>
   <a href="#-design-principles"><img src="https://img.shields.io/badge/Agent_Framework-None-8B5CF6?style=for-the-badge" alt="No agent framework" /></a>
   <a href="#-quick-start"><img src="https://img.shields.io/badge/Runtime_Dependencies-0-14B8A6?style=for-the-badge" alt="Zero runtime dependencies" /></a>
 
@@ -47,7 +47,7 @@ ProofCode 把 **模型决策** 与 **程序完成条件** 分离，并围绕两�
 
 ### 🧠 Layered context
 
-长任务不再把所有文件、搜索结果和终端输出无限塞回 prompt。ProofCode 将上下文拆成 **L1 索引 / L2 摘要 / L3 原始证据**，模型需要细节时再通过 ID 恢复完整内容。
+当前任务用证据关联的 Working Memory 保持连续性；跨任务经验按 GenericAgent 风格进入 **L1 索引 / L2 事实 / L3 SOP 与 Skill / L4 原始会话**，深层内容只按需读取。
 
 </td>
 </tr>
@@ -66,17 +66,20 @@ flowchart LR
 
     U["👤 Coding Task"]:::user --> M["✦ Model Decision"]:::model
     M --> T["⚙ Local Tools"]:::tool
-    T --> E["L3 · Raw Evidence"]:::context
-    E --> W["L2 · Working Summary"]:::context
-    W --> I["L1 · Compact Index"]:::context
-    I --> M
+    T --> E["Session Evidence"]:::context
+    E --> W["Working Memory Checkpoint"]:::context
+    W --> M
     T -->|observed change| R["Revision +1"]:::gate
     R --> X["Invalidate stale evidence"]:::gate
     X --> M
     T -->|test / build / lint| V{"Current revision verified?"}:::gate
     V -->|No| M
     V -->|Yes| D["✓ Complete"]:::done
-    D --> J["JSONL Trajectory"]:::context
+    D --> J["L4 · Raw Session"]:::context
+    D --> C["Verified Commit"]:::gate
+    C --> K["L2 Facts · L3 SOP/Skill"]:::context
+    K --> I["L1 · Bounded Index"]:::context
+    I -. next task .-> M
 ```
 
 <div align="center">
@@ -90,9 +93,12 @@ flowchart LR
 | | Capability | What ProofCode does |
 |:--:|---|---|
 | 🔁 | **Native Agent Loop** | 直接解析 OpenAI-compatible Chat Completions API 的原生 tool calls，并将结构化结果反馈给模型 |
-| 🧠 | **3-Layer Context** | L1 紧凑索引、L2 工作摘要、L3 可按需恢复的完整工具证据 |
+| 🧠 | **Working Memory** | Agent 主动维护关键发现、约束、假设、进度与下一步；每条结论绑定 E 证据，并随依赖文件变化失效 |
+| 🌱 | **Verified Self-Evolution** | 完成后才把有证据的稳定事实、SOP 或已验证 Python Skill 固化到跨任务 L1/L2/L3 |
+| 🧭 | **Routed Evidence** | 常驻上下文只保留运行状态、工作检查点和紧凑路由；历史或截断证据可检索 C/E 指针后按需恢复 |
 | 🧬 | **Revision Awareness** | 成功编辑或命令引起的可观测文件变化推进 revision，旧命令与验证自动标记 stale |
-| ✅ | **Evidence Gate** | 普通成功命令和单个 focused test 不足以结束；需要当前 revision 的项目级 validation |
+| ✅ | **Validation Policy** | 自动给出常见项目验证建议；项目可用 `.proofcode.json` 固定由 Runtime 强制要求的 baseline |
+| 🛡️ | **Evidence Gate** | 普通成功命令和单个 focused test 不足以结束；需要当前 revision 满足项目验证策略 |
 | ✍️ | **Controlled Editing** | 支持唯一文本替换、新文件创建、单文件 unified-diff patch |
 | 🔍 | **Diff Review** | 查看相对 Git `HEAD` 的 staged、unstaged 与 untracked 状态 |
 | 🖥️ | **Local Execution** | `subprocess.run(..., shell=False)`；限制工作目录、超时与输出长度 |
@@ -108,9 +114,12 @@ flowchart LR
 ├─ Edit ──────────────────────────────────────────────────┤
 │  replace_text   create_file     apply_patch             │
 ├─ Review & Execute ──────────────────────────────────────┤
-│  show_diff      run_command                             │
+│  show_diff      run_command                              │
 ├─ Context ───────────────────────────────────────────────┤
-│  list_context   read_context                            │
+│  update_working_memory   list_context                    │
+│  search_context          read_context                    │
+├─ Long-term Memory ───────────────────────────────────────┤
+│  propose_memory   search_memory   read_memory             │
 ╰─────────────────────────────────────────────────────────╯
 ```
 
@@ -172,20 +181,50 @@ python -m proofcode --workspace ".\demo-project" --approve-all "运行测试并�
 
 交互式终端默认使用结构化状态、语义颜色和审批面板；审批时输入 `y` 仅允许当前操作，输入 `a` 则允许本次运行中的当前及后续操作。输出重定向时自动退回纯文本，需要主动关闭 ANSI 颜色时使用 `--no-color`。这些选项不改变工具、revision 或完成门控。
 
-## 🧠 Layered Context
+## 🧠 Working Memory + Hierarchical Long-Term Memory
 
 ProofCode 不丢弃长输出，而是改变它们进入模型上下文的方式。
 
 ```text
-L1  CONTEXT INDEX
-│   task · revision · changed files · verification · C/E pointers
-│
-├── L2  WORKING CONTEXT
-│       deterministic summaries of reads / searches / edits / commands
-│
-└── L3  RAW EVIDENCE
-        complete tool output, recoverable by ID + offset via read_context
+Current task Working Memory (always on)
+  runtime state + key findings + constraints + hypotheses + next action
+  recent full exchanges + C/E session evidence routes
+
+Cross-task Long-Term Memory
+  L1 INDEX      bounded pointers, always on
+      ↓ on-demand routing
+  L2 FACTS      verified stable project facts
+  L3 SOP/SKILL  reusable workflows / validated Python files
+  L4 SESSIONS   complete JSONL trajectories and raw tool results
 ```
+
+Working Memory 负责**当前任务连续性**，不冒充长期事实库。Agent 在关键发现、修改或验证反馈发生后调用 `update_working_memory`，提交 `finding / constraint / hypothesis / progress / risk`；Runtime 要求每项引用真实且当前有效的 E 证据，并根据证据推导依赖文件。文件改变后，相关条目 stale，不再进入活跃检查点。
+
+Runtime 校验的是 **provenance**：结论来自哪次真实读取或执行；它不声称能够自动证明自然语言结论被证据语义蕴含。这个边界避免把模型生成的摘要包装成 correctness proof。
+
+每轮输入由两条互补通道组成：近期完整 tool exchange 保留局部操作连续性，Working Memory anchor 保留跨越裁剪边界的全局任务状态。检查点最多 16 条、每条最多 360 字符；出现新证据后显示 `needs_refresh`。
+
+较早的当前任务证据通过 `search_context → read_context` 恢复；跨任务知识只常驻最多 27 行的 L1 路由，具体 L2/L3 内容通过 `read_memory` 按需读取。
+
+## 🌱 Verified Self-Evolution
+
+```text
+successful tool evidence
+        ↓
+propose_memory (candidate only)
+        ↓
+completion gate passes
+        ↓ Runtime admission
+L2 Fact / L3 SOP / L3 Python Skill
+        ↓
+L1 index updated atomically
+        ↓
+next run retrieves it on demand
+```
+
+这不是“任务结束就自动总结”。Fact 必须引用成功且未过期的 E 证据；SOP 与 Skill 还必须引用当前 project-wide validation。Skill 不能由模型在参数中凭空生成，只能复制真实工作区中经过验证的 Python 文件，未来执行仍调用 `run_command` 并经过正常人工确认。候选只在 completion gate 通过后提交；同标题的新版本通过 `supersedes` 替代活跃指针，旧文件继续保留用于审计。
+
+L4 默认 JSONL 轨迹保存完整 raw tool result，并用 `run_id` 与固化条目的 provenance 关联。L1 只保存 ID、类别、标题和关键词；L2/L3 扩张不会线性进入 prompt。这对应 GenericAgent 的 triggered commit、minimum sufficient pointer 和 “No Execution, No Memory”。
 
 当文件发生修改后，与旧内容相关的读取、搜索、命令和验证条目会被标记为 `stale`。`run_command` 前后也会比较工作区文件元数据，以捕获格式化器、生成器等命令带来的变化。模型仍可审计历史证据，但不能把旧版本的成功测试当成当前版本的完成依据。当前采用 workspace-level 保守失效：即使只修改 README，也会使旧验证失效。
 
@@ -202,6 +241,20 @@ L1  CONTEXT INDEX
 
 验证命令由本地确定性规则识别，覆盖常见的 **Python / Node.js / Go / Rust / .NET / Maven / Gradle / Make** 工作流。显式指定测试文件、用例或单文件检查的命令标记为 `focused`；它们可以提供快速反馈，但完成还需要项目级 baseline。因此，修改 `auth.py` 后只运行 `pytest tests/test_math.py` 不会通过完成门控。
 
+Runtime 会从常见项目文件中给出验证建议。需要把 verifier selection 与模型选择进一步解耦时，可在目标仓库放置：
+
+```json
+{
+  "validation": {
+    "required_commands": [
+      ["python", "-m", "unittest", "discover", "-v"]
+    ]
+  }
+}
+```
+
+显式策略中的每条命令必须能被识别为项目级 validation；配置无效会直接阻止修改型任务完成。策略不会被自动执行，实际命令仍经过正常审批，但模型不能用另一个更容易通过的命令替代它。
+
 这里的 project-wide 是命令范围上的确定性近似，不是语义相关性或测试完备性的证明。当前系统没有建立 changed-file dependency、coverage 或 test-impact mapping；validation selection 仍由 Agent 提议，Runtime 负责真实执行、范围分类、版本绑定和完成门控。因此它是 evidence executor 和 gatekeeper，不是独立的 correctness verifier：
 
 ```text
@@ -209,7 +262,7 @@ L1  CONTEXT INDEX
 完成被接受  ⇏ 用户需求已被形式化证明
 ```
 
-当前 gate 是 observed-change-triggered，并不理解完整任务意图。进一步可以引入显式 `analysis` / `modification` 任务契约，以及由 Runtime 选择的固定 baseline 和 test-impact mapping。
+当前 gate 是 observed-change-triggered，并不理解完整任务意图。固定 baseline 已可由项目策略声明；进一步仍需要 `analysis` / `modification` 任务契约，以及 changed-file dependency、coverage 或 test-impact mapping。
 
 ## 🧾 Auditable Trajectory
 
@@ -246,11 +299,11 @@ python -m unittest discover -v
 ```
 
 ```text
-Ran 51 tests
+Ran 66 tests
 OK
 ```
 
-当前测试覆盖：模型协议解析、路径隔离、工具参数、补丁匹配、差异审查、上下文恢复、版本失效、验证反馈、循环终止与轨迹写入。
+当前测试覆盖：模型协议解析、路径隔离、工具参数、补丁匹配、差异审查、上下文检索与恢复、版本失效、验证反馈、循环终止、轨迹写入、长期记忆准入与跨运行召回。
 
 分层上下文回放：
 
@@ -258,10 +311,18 @@ OK
 python -m evaluation.context_replay
 ```
 
-当前受控回放包含 **18 轮**长工具输出。以序列化字符数作为上下文开销代理，分层策略相对完整线性历史减少约 **70.1%**，同时能够从 L3 恢复全部原始证据。
+当前受控回放包含 **18 轮**长工具输出。以序列化字符数作为上下文开销代理，路由式上下文相对完整线性历史减少约 **71.8%**，同时能够恢复全部原始证据。
 
 > [!IMPORTANT]
-> `70.1%` 是当前受控回放用于验证机制的结果，不代表所有真实任务、模型或 tokenizer 上固定的 token 节省比例。
+> `71.8%` 是当前受控回放用于验证机制的结果，不代表所有真实任务、模型或 tokenizer 上固定的 token 节省比例。
+
+机制对照场景：
+
+```bat
+python -m evaluation.design_scenarios
+```
+
+它验证三条可观察性质：长输出中默认不可见的中段错误仍能经 `search_context → read_context` 恢复；早期证据移出常驻索引后仍能按关键词重新定位；项目验证通过后再次修改代码会立刻回到 `missing`，focused 检查通过后仍需项目级 baseline。
 
 ## 📦 Project Structure
 
@@ -271,26 +332,31 @@ proofcode/
 ├── cli.py            # CLI、批准流程与事件展示
 ├── config.py         # 环境变量配置
 ├── context.py        # 对话交换与近期历史裁剪
+├── memory.py         # L1/L2/L3 持久化、检索与版本提交
 ├── model.py          # OpenAI-compatible 请求与响应解析
 ├── patching.py       # 受限 unified-diff 解析
-├── state.py          # L1/L2/L3、revision 与验证状态
+├── project.py        # 项目验证策略与常见 baseline 建议
+├── state.py          # Working Memory、候选准入、revision 与验证状态
 ├── tools.py          # 本地工具注册、校验与执行
 ├── trajectory.py     # JSONL 运行轨迹
 ├── validation.py     # 测试、构建与静态检查识别
 └── types.py          # 核心数据结构
 
 tests/                # 单元测试与脚本化 Agent 流程
-evaluation/           # 上下文回放评估
+evaluation/           # 上下文成本回放与动态路由/版本门控场景
 demo/                 # 可重复录制的人工确认、三层上下文与验证门控案例
 ```
+
+`demo/` 保留单文件快速演示；`demo/multifile/` 提供更适合最终视频的 Bearer 鉴权任务，通过解析器与 middleware 的调用关系展示 focused feedback、多文件影响、revision 失效和最终项目级验证。
 
 ## ◆ Design Principles
 
 1. **Core logic stays visible.** 不依赖 Agent 框架，也不依赖服务端托管文件或代码执行工具。
 2. **The model proposes; the program constrains.** 路径、批准、超时、版本和完成条件由本地程序确定。
-3. **Preserve evidence, not prompt bloat.** 默认传递索引和摘要，原始证据按需恢复。
-4. **Repair with execution feedback.** 失败测试进入下一轮，成功验证才构成完成依据。
-5. **Stay small.** 当前保持同步单 Agent 循环，不引入多智能体、插件或向量数据库。
+3. **Preserve decisions and provenance, not prompt bloat.** 常驻的是证据关联的关键认识，原始输出按需恢复。
+4. **Repair with execution feedback.** 失败测试既进入下一轮，也可沉淀为当前 working checkpoint 中有来源的假设、风险和下一步。
+5. **Evolve knowledge, not the tool layer.** 工具接口保持固定；只有通过完成门控的事实、SOP 和已验证脚本可以跨任务积累。
+6. **Stay small.** 当前保持同步单 Agent 循环，不引入多智能体、插件或向量数据库。
 
 ## 🔐 Security Boundary
 
@@ -303,10 +369,12 @@ ProofCode 限制所有工具路径不能逃逸工作区；命令使用 argv 数�
 
 - **SWE-agent** — Agent-Computer Interface 与面向模型的工具反馈设计 · [Paper](https://arxiv.org/abs/2405.15793)
 - **mini-SWE-agent** — 小型、线性的 coding-agent harness · [Repository](https://github.com/SWE-agent/mini-swe-agent)
-- **Generative Agents** — 分层记忆、检索与反思的长期 Agent 设计 · [Paper](https://arxiv.org/abs/2304.03442)
+- **GenericAgent** — context information density、常驻工作锚点、按需分层检索与上下文压缩 · [Paper](https://arxiv.org/abs/2604.17091)
+- **VRpilot** — 编译器与测试输出驱动的 patch-validation feedback · [Paper](https://arxiv.org/abs/2405.15690)
+- **CodePlan** — repository oracle 将验证诊断转化为下一轮修改并控制终止 · [Paper](https://arxiv.org/abs/2309.12499)
 - **Agentless** — 软件问题定位、修复与验证的阶段化思路 · [Paper](https://arxiv.org/abs/2407.01489)
 
-ProofCode 没有复制上述项目的 Agent 实现。项目保留标准的 **model → tool → feedback** 循环，并针对代码状态变化、长工具输出和过早完成问题实现自己的轻量机制。
+ProofCode 没有复制上述项目的 Agent 实现，也不宣称具有 GenericAgent 的全部通用能力。它面向 Coding Agent 实现了 working-memory anchor、L1→L2/L3 按需路由、L4 会话归档与验证后经验固化；仍未实现自动调度反思、跨项目全局记忆或 CodePlan 的依赖图。
 
 <br/>
 

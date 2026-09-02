@@ -23,7 +23,7 @@ class ConsoleTests(unittest.TestCase):
         rendered = output.getvalue()
         self.assertNotIn("\033[", rendered)
         self.assertIn("步骤 02", rendered)
-        self.assertIn("◆ 工具  run_command", rendered)
+        self.assertIn("◆ 执行本地命令", rendered)
         self.assertIn("✓ 任务完成", rendered)
 
     def test_color_console_wraps_semantic_status_with_ansi(self) -> None:
