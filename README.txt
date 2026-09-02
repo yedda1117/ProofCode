@@ -14,7 +14,7 @@ python -m proofcode --workspace ".\demo\workspace" "运行测试并修复错误"
 支持文件编辑、本地命令、Git 差异、人工审批和 JSONL 轨迹。
 
 2. GenericAgent 的 L1-L4 分层记忆
-L1 为索引，L2 为事实，L3 为 Coding SOP/Python Skill，L4 为轨迹，内容按需读取。
+L1 合并项目与全局索引；L2 项目事实、L4 轨迹留在 workspace，L3 Coding SOP/Python Skill 写入 PROOFCODE_HOME，跨项目按需读取。
 
 3. Memory Management SOP
 模型只提出候选；成功后 Runtime 检查证据、版本、项目验证与敏感信息再写入。

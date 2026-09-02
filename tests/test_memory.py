@@ -32,6 +32,7 @@ class LongTermMemoryTests(unittest.TestCase):
         )
         self.addCleanup(self.temporary_directory.cleanup)
         self.root = Path(self.temporary_directory.name)
+        self.agent_home = self.root / "agent-home"
 
     def candidate(self, *, title: str = "Test convention", content: str = "Use unittest.") -> MemoryCandidate:
         return MemoryCandidate(
@@ -44,20 +45,20 @@ class LongTermMemoryTests(unittest.TestCase):
         )
 
     def test_commit_builds_bounded_index_and_reads_content_on_demand(self) -> None:
-        store = LongTermMemoryStore(self.root)
+        store = LongTermMemoryStore(self.root, self.agent_home)
 
         committed = store.commit((self.candidate(),), run_id="run-1")
 
-        self.assertEqual(committed, ("F0001",))
+        self.assertEqual(committed, ("project:F0001",))
         index = store.index_prompt()
-        self.assertIn("F0001 [fact] Test convention", index)
+        self.assertIn("project:F0001 [fact] Test convention", index)
         self.assertNotIn("Use unittest.", index)
         recalled = store.read("F0001")
         self.assertIn('"content": "# Test convention\\n\\nUse unittest.\\n"', recalled or "")
         self.assertIn('"source_run_id": "run-1"', recalled or "")
 
     def test_exact_duplicate_is_reused_and_same_title_supersedes(self) -> None:
-        store = LongTermMemoryStore(self.root)
+        store = LongTermMemoryStore(self.root, self.agent_home)
         first = store.commit((self.candidate(),), run_id="run-1")
         duplicate = store.commit((self.candidate(),), run_id="run-2")
         replacement = store.commit(
@@ -66,13 +67,13 @@ class LongTermMemoryTests(unittest.TestCase):
         )
 
         self.assertEqual(first, duplicate)
-        self.assertEqual(replacement, ("F0002",))
+        self.assertEqual(replacement, ("project:F0002",))
         payload = json.loads(store.index_path.read_text(encoding="utf-8"))
         self.assertFalse(payload["entries"][0]["active"])
         self.assertEqual(payload["entries"][1]["supersedes"], "F0001")
 
     def test_corrupt_index_is_not_silently_overwritten(self) -> None:
-        store = LongTermMemoryStore(self.root)
+        store = LongTermMemoryStore(self.root, self.agent_home)
         store.root.mkdir(parents=True)
         store.index_path.write_text("not json", encoding="utf-8")
 
@@ -80,6 +81,28 @@ class LongTermMemoryTests(unittest.TestCase):
             store.commit((self.candidate(),), run_id="run-1")
 
         self.assertEqual(store.index_path.read_text(encoding="utf-8"), "not json")
+
+    def test_global_sop_is_visible_from_another_workspace(self) -> None:
+        first_workspace = self.root / "first"
+        second_workspace = self.root / "second"
+        first_workspace.mkdir()
+        second_workspace.mkdir()
+        sop = MemoryCandidate(
+            id="MC0001",
+            kind="sop",
+            title="Safe smoke test",
+            content="Use a temporary data copy.",
+            keywords=("smoke", "temporary"),
+            evidence=({"evidence_id": "E0001", "revision": 1},),
+        )
+
+        first = LongTermMemoryStore(first_workspace, self.agent_home)
+        self.assertEqual(first.commit((sop,), run_id="run-1"), ("global:S0001",))
+        second = LongTermMemoryStore(second_workspace, self.agent_home)
+
+        self.assertIn("global:S0001 [sop] Safe smoke test", second.index_prompt())
+        self.assertIn("Use a temporary data copy.", second.read("global:S0001") or "")
+        self.assertFalse((first_workspace / ".proofcode" / "memory" / "l3_sops").exists())
 
 
 class MemoryAdmissionTests(unittest.TestCase):
@@ -173,7 +196,12 @@ class SkillCommitTests(unittest.TestCase):
         self.root = Path(self.temporary_directory.name)
         self.source = self.root / "check_project.py"
         self.source.write_text("print('checked')\n", encoding="utf-8")
-        self.registry = ToolRegistry(self.root, approve=lambda _name, _args: True)
+        self.agent_home = self.root / "agent-home"
+        self.registry = ToolRegistry(
+            self.root,
+            agent_home=self.agent_home,
+            approve=lambda _name, _args: True,
+        )
         self.state = WorkspaceState(
             "Create a reusable check", self.registry.validation_policy
         )
@@ -208,8 +236,8 @@ class SkillCommitTests(unittest.TestCase):
 
         committed = self.registry.commit_memory(run_id="run-1")
 
-        self.assertEqual(committed, ("K0001",))
-        saved = next((self.root / ".proofcode" / "memory" / "l3_skills").glob("*.py"))
+        self.assertEqual(committed, ("global:K0001",))
+        saved = next((self.agent_home / "memory" / "l3_skills").glob("*.py"))
         self.assertEqual(saved.read_text(encoding="utf-8"), "print('checked')\n")
 
     def test_skill_source_cannot_be_swapped_after_staging(self) -> None:

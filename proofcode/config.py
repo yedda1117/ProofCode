@@ -10,6 +10,7 @@ from proofcode.errors import ConfigurationError
 @dataclass(frozen=True)
 class Settings:
     workspace: Path
+    proofcode_home: Path
     api_key: str
     base_url: str
     model: str
@@ -46,8 +47,15 @@ class Settings:
             raise ConfigurationError(f"Workspace is not a directory: {root}")
         if max_steps < 1:
             raise ConfigurationError("max_steps must be at least 1")
+        configured_home = os.environ.get("PROOFCODE_HOME", "").strip()
+        proofcode_home = (
+            Path(configured_home).expanduser().resolve()
+            if configured_home
+            else (Path.home() / ".proofcode").resolve()
+        )
         return cls(
             workspace=root,
+            proofcode_home=proofcode_home,
             api_key=api_key,
             base_url=base_url.rstrip("/"),
             model=model,

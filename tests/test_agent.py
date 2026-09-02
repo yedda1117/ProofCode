@@ -309,7 +309,7 @@ class CodingAgentTests(unittest.TestCase):
 
             self.assertEqual(second_result.reason, StopReason.COMPLETED)
             second_run_initial_context = str(second_model.seen_messages[0])
-            self.assertIn("F0001 [fact] Test directory", second_run_initial_context)
+            self.assertIn("project:F0001 [fact] Test directory", second_run_initial_context)
             self.assertNotIn("Project tests are discovered under tests/", second_run_initial_context)
 
 

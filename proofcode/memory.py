@@ -21,24 +21,31 @@ class MemoryCandidate:
 
 
 class LongTermMemoryStore:
-    """Project-local, persistent L1/L2/L3 memory.
+    """Two-scope persistent memory for coding work.
 
-    L1 is a compact generated index. L2 stores verified project facts. L3
-    stores reusable SOPs and exact copies of validated Python skills. Raw L4
-    sessions remain in ``.proofcode/runs`` and are managed by the trajectory
-    recorder rather than this store.
+    Project-specific L2 facts stay beside the repository. Reusable L3 SOPs
+    and executable skills live in the agent home so they can transfer across
+    workspaces. L1 is assembled from both indexes; L4 remains project-local.
     """
 
-    def __init__(self, workspace: Path) -> None:
-        self.root = workspace.resolve() / ".proofcode" / "memory"
+    def __init__(self, workspace: Path, agent_home: Path | None = None) -> None:
+        self.workspace = workspace.resolve()
+        self.root = self.workspace / ".proofcode" / "memory"
         self.index_path = self.root / "l1_index.json"
+        home = (agent_home or (Path.home() / ".proofcode")).expanduser().resolve()
+        self.global_root = home / "memory"
+        self.global_index_path = self.global_root / "l1_index.json"
 
     def index_prompt(self, *, max_entries: int = 24) -> str:
-        entries = [entry for entry in self._entries() if entry.get("active", True)]
+        entries = [
+            (scope, entry)
+            for scope, entry in self._scoped_entries()
+            if entry.get("active", True)
+        ]
         entries.sort(
             key=lambda item: (
-                int(item.get("use_count", 0)),
-                str(item.get("created_at", "")),
+                int(item[1].get("use_count", 0)),
+                str(item[1].get("created_at", "")),
             ),
             reverse=True,
         )
@@ -48,10 +55,10 @@ class LongTermMemoryStore:
             f"available_entries: {len(entries)}; showing: {len(shown)}",
             "routing: call read_memory with an ID; use search_memory when no pointer matches",
         ]
-        for entry in shown:
+        for scope, entry in shown:
             keywords = ",".join(entry.get("keywords", []))
             lines.append(
-                f"- {entry['id']} [{entry['kind']}] {entry['title']} "
+                f"- {scope}:{entry['id']} [{entry['kind']}] {entry['title']} "
                 f"keywords={keywords}"
             )
         if not shown:
@@ -63,10 +70,10 @@ class LongTermMemoryStore:
         if not needle:
             raise ValueError("memory query must not be empty")
         matches: list[dict[str, Any]] = []
-        for entry in self._entries():
+        for scope, entry in self._scoped_entries():
             if not entry.get("active", True):
                 continue
-            content = self._read_entry_content(entry)
+            content = self._read_entry_content(entry, scope)
             haystack = " ".join(
                 [
                     str(entry.get("title", "")),
@@ -78,7 +85,8 @@ class LongTermMemoryStore:
                 continue
             matches.append(
                 {
-                    "id": entry["id"],
+                    "id": f"{scope}:{entry['id']}",
+                    "scope": scope,
                     "kind": entry["kind"],
                     "title": entry["title"],
                     "keywords": entry.get("keywords", []),
@@ -89,26 +97,29 @@ class LongTermMemoryStore:
         return tuple(matches)
 
     def read(self, memory_id: str) -> str | None:
-        payload = self._load_index()
-        entry = next(
-            (
-                item
-                for item in payload["entries"]
-                if item.get("id") == memory_id and item.get("active", True)
-            ),
-            None,
-        )
-        if entry is None:
+        requested_scope, separator, bare_id = memory_id.partition(":")
+        scopes = (requested_scope,) if separator and requested_scope in {"project", "global"} else ("global", "project")
+        target_id = bare_id if separator else memory_id
+        located = None
+        for scope in scopes:
+            payload = self._load_index(scope)
+            entry = next((item for item in payload["entries"] if item.get("id") == target_id and item.get("active", True)), None)
+            if entry is not None:
+                located = (scope, payload, entry)
+                break
+        if located is None:
             return None
-        content = self._read_entry_content(entry)
+        scope, payload, entry = located
+        content = self._read_entry_content(entry, scope)
         rendered = json.dumps(
             {
-                "id": entry["id"],
+                "id": f"{scope}:{entry['id']}",
+                "scope": scope,
                 "kind": entry["kind"],
                 "title": entry["title"],
                 "keywords": entry.get("keywords", []),
                 "content": content,
-                "workspace_path": ".proofcode/memory/" + str(entry.get("path", "")),
+                "storage_path": str(self._root_for_scope(scope) / str(entry.get("path", ""))),
                 "execution_policy": (
                     "invoke through run_command with normal approval"
                     if entry.get("kind") == "skill"
@@ -122,7 +133,7 @@ class LongTermMemoryStore:
             ensure_ascii=False,
         )
         entry["use_count"] = int(entry.get("use_count", 0)) + 1
-        self._write_index(payload)
+        self._write_index(payload, scope)
         return rendered
 
     def commit(
@@ -133,10 +144,11 @@ class LongTermMemoryStore:
     ) -> tuple[str, ...]:
         if not candidates:
             return ()
-        payload = self._load_index()
-        entries = payload["entries"]
         committed: list[str] = []
         for candidate in candidates:
+            scope = "project" if candidate.kind == "fact" else "global"
+            payload = self._load_index(scope)
+            entries = payload["entries"]
             digest = hashlib.sha256(
                 f"{candidate.kind}\0{candidate.title}\0{candidate.content}".encode("utf-8")
             ).hexdigest()
@@ -150,7 +162,7 @@ class LongTermMemoryStore:
                 None,
             )
             if duplicate is not None:
-                committed.append(str(duplicate["id"]))
+                committed.append(f"{scope}:{duplicate['id']}")
                 continue
 
             previous = next(
@@ -168,7 +180,7 @@ class LongTermMemoryStore:
                 previous["active"] = False
 
             memory_id = self._allocate_id(payload, candidate.kind)
-            relative_path = self._write_candidate(memory_id, candidate)
+            relative_path = self._write_candidate(memory_id, candidate, scope)
             entry = {
                 "id": memory_id,
                 "kind": candidate.kind,
@@ -183,25 +195,31 @@ class LongTermMemoryStore:
                 "supersedes": previous.get("id") if previous else None,
                 "active": True,
                 "use_count": 0,
+                "scope": scope,
+                "source_workspace": str(self.workspace),
             }
             entries.append(entry)
-            committed.append(memory_id)
-        self._write_index(payload)
+            committed.append(f"{scope}:{memory_id}")
+            self._write_index(payload, scope)
         return tuple(committed)
 
-    def _entries(self) -> list[dict[str, Any]]:
-        return list(self._load_index()["entries"])
+    def _scoped_entries(self) -> list[tuple[str, dict[str, Any]]]:
+        return [
+            *[("project", item) for item in self._load_index("project")["entries"]],
+            *[("global", item) for item in self._load_index("global")["entries"]],
+        ]
 
-    def _load_index(self) -> dict[str, Any]:
+    def _load_index(self, scope: str = "project") -> dict[str, Any]:
         empty = {
             "version": 1,
             "next_ids": {"fact": 1, "sop": 1, "skill": 1},
             "entries": [],
         }
-        if not self.index_path.is_file():
+        index_path = self._index_for_scope(scope)
+        if not index_path.is_file():
             return empty
         try:
-            payload = json.loads(self.index_path.read_text(encoding="utf-8"))
+            payload = json.loads(index_path.read_text(encoding="utf-8"))
             if not isinstance(payload, dict) or not isinstance(payload.get("entries"), list):
                 raise OSError("invalid long-term memory index structure")
             payload.setdefault("version", 1)
@@ -210,14 +228,16 @@ class LongTermMemoryStore:
         except (UnicodeError, json.JSONDecodeError) as exc:
             raise OSError(f"cannot read long-term memory index: {exc}") from exc
 
-    def _write_index(self, payload: dict[str, Any]) -> None:
-        self.root.mkdir(parents=True, exist_ok=True)
-        temporary = self.index_path.with_suffix(".tmp")
+    def _write_index(self, payload: dict[str, Any], scope: str = "project") -> None:
+        root = self._root_for_scope(scope)
+        index_path = self._index_for_scope(scope)
+        root.mkdir(parents=True, exist_ok=True)
+        temporary = index_path.with_suffix(".tmp")
         temporary.write_text(
             json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
             encoding="utf-8",
         )
-        temporary.replace(self.index_path)
+        temporary.replace(index_path)
 
     def _allocate_id(self, payload: dict[str, Any], kind: str) -> str:
         prefixes = {"fact": "F", "sop": "S", "skill": "K"}
@@ -225,17 +245,17 @@ class LongTermMemoryStore:
         payload["next_ids"][kind] = number + 1
         return f"{prefixes[kind]}{number:04d}"
 
-    def _write_candidate(self, memory_id: str, candidate: MemoryCandidate) -> str:
+    def _write_candidate(self, memory_id: str, candidate: MemoryCandidate, scope: str) -> str:
         slug = re.sub(r"[^a-zA-Z0-9_-]+", "-", candidate.title).strip("-").lower()
         slug = (slug or "memory")[:60]
         if candidate.kind == "fact":
-            directory = self.root / "l2_facts"
+            directory = self._root_for_scope(scope) / "l2_facts"
             suffix = ".md"
         elif candidate.kind == "sop":
-            directory = self.root / "l3_sops"
+            directory = self._root_for_scope(scope) / "l3_sops"
             suffix = ".md"
         else:
-            directory = self.root / "l3_skills"
+            directory = self._root_for_scope(scope) / "l3_skills"
             suffix = ".py"
         directory.mkdir(parents=True, exist_ok=True)
         path = directory / f"{memory_id}_{slug}{suffix}"
@@ -244,18 +264,25 @@ class LongTermMemoryStore:
         else:
             rendered = f"# {candidate.title}\n\n{candidate.content.strip()}\n"
         path.write_text(rendered, encoding="utf-8", newline="\n")
-        return path.relative_to(self.root).as_posix()
+        return path.relative_to(self._root_for_scope(scope)).as_posix()
 
-    def _read_entry_content(self, entry: dict[str, Any]) -> str:
+    def _read_entry_content(self, entry: dict[str, Any], scope: str) -> str:
         relative = entry.get("path")
         if not isinstance(relative, str):
             return "[memory content unavailable]"
-        path = (self.root / relative).resolve()
+        root = self._root_for_scope(scope)
+        path = (root / relative).resolve()
         try:
-            path.relative_to(self.root.resolve())
+            path.relative_to(root.resolve())
         except ValueError:
             return "[invalid memory path]"
         try:
             return path.read_text(encoding="utf-8")
         except (OSError, UnicodeError):
             return "[memory content unavailable]"
+
+    def _root_for_scope(self, scope: str) -> Path:
+        return self.global_root if scope == "global" else self.root
+
+    def _index_for_scope(self, scope: str) -> Path:
+        return self.global_index_path if scope == "global" else self.index_path

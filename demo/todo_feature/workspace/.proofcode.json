@@ -1,0 +1,7 @@
+{
+  "validation": {
+    "required_commands": [
+      ["python", "-m", "unittest", "discover", "-v"]
+    ]
+  }
+}

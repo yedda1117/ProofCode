@@ -23,6 +23,9 @@ for generated in (workspace / ".smoke_test.py",):
 runtime = workspace / ".proofcode"
 if runtime.exists():
     shutil.rmtree(runtime)
+agent_memory = root / "agent_memory"
+if agent_memory.exists():
+    shutil.rmtree(agent_memory)
 demo_data = workspace / "data" / "demo_inventory.json"
 shutil.copy2(workspace / "data" / "inventory.json", demo_data)
 

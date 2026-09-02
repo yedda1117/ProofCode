@@ -44,6 +44,7 @@ class Console:
         self,
         *,
         workspace: Path,
+        proofcode_home: Path,
         model: str,
         max_steps: int,
         validation_policy: str,
@@ -51,6 +52,7 @@ class Console:
         print()
         print(self.style("╭─ ProofCode · 执行证据驱动的编程智能体", self.BOLD, self.CYAN))
         print(f"│ 工作区      {workspace}")
+        print(f"│ Agent 记忆  {proofcode_home}")
         print(f"│ 模型        {model}")
         print(f"│ 最大步数    {max_steps}")
         print(f"│ 验证策略    {validation_policy}")
@@ -228,12 +230,14 @@ def main(argv: list[str] | None = None) -> int:
     console = Console(color=False if args.no_color else None)
     tools = ToolRegistry(
         settings.workspace,
+        agent_home=settings.proofcode_home,
         output_limit=settings.tool_output_chars,
         command_timeout=settings.command_timeout,
         approve=_approval(args.approve_all, console),
     )
     console.banner(
         workspace=settings.workspace,
+        proofcode_home=settings.proofcode_home,
         model=settings.model,
         max_steps=settings.max_steps,
         validation_policy=tools.validation_policy.prompt_line(),
@@ -252,6 +256,7 @@ def main(argv: list[str] | None = None) -> int:
                 "task": task,
                 "system_prompt": SYSTEM_PROMPT,
                 "workspace": str(settings.workspace),
+                "proofcode_home": str(settings.proofcode_home),
                 "model": settings.model,
                 "max_steps": settings.max_steps,
             },

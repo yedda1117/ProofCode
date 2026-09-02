@@ -67,6 +67,7 @@ class ToolRegistry:
         *,
         output_limit: int = 20_000,
         command_timeout: int = 120,
+        agent_home: Path | None = None,
         approve: ApprovalCallback | None = None,
     ) -> None:
         self.workspace = Workspace(workspace)
@@ -74,7 +75,7 @@ class ToolRegistry:
         self.command_timeout = command_timeout
         self.approve = approve or (lambda _name, _args: False)
         self.validation_policy = discover_validation_policy(self.workspace.root)
-        self.memory_store = LongTermMemoryStore(self.workspace.root)
+        self.memory_store = LongTermMemoryStore(self.workspace.root, agent_home)
         self.state: WorkspaceState | None = None
         self._tools = self._build_tools()
 
