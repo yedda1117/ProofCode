@@ -28,6 +28,18 @@ Working memory combines runtime state, an evidence-grounded checkpoint, recent e
 
 EventCallback = Callable[[str, dict[str, Any]], None]
 
+OBSERVATION_TOOLS = {
+    "list_files",
+    "search_text",
+    "read_file",
+    "show_diff",
+    "list_context",
+    "search_context",
+    "read_context",
+    "search_memory",
+    "read_memory",
+}
+
 
 class CodingAgent:
     def __init__(
@@ -37,7 +49,7 @@ class CodingAgent:
         tools: ToolRegistry,
         max_steps: int = 20,
         context_chars: int = 120_000,
-        recent_history_chars: int = 24_000,
+        recent_history_chars: int = 64_000,
         run_id: str | None = None,
         on_event: EventCallback | None = None,
     ) -> None:
@@ -67,7 +79,10 @@ class CodingAgent:
             "key": None,
             "count": 0,
             "failed_count": 0,
+            "revision_counts": {},
+            "revision_evidence": {},
         }
+        consolidation_requested = False
 
         for step in range(1, self.max_steps + 1):
             self.on_event("step", {"step": step})
@@ -122,6 +137,24 @@ class CodingAgent:
                 self.on_event("verification_rejected", {"reason": feedback})
                 conversation.add_feedback(response.raw_message, feedback)
                 continue
+            if (
+                workspace_state.changed_files
+                and workspace_state.validation_policy.required_commands
+                and not workspace_state.memory_candidates
+                and not consolidation_requested
+            ):
+                consolidation_requested = True
+                reflection = (
+                    "任务已经通过项目策略要求的当前版本验证。进入自动经验固化阶段："
+                    "检查本次 E 证据，只把稳定、难以轻易重新发现且可跨任务复用的经验"
+                    "提交为长期记忆候选。项目事实使用 fact；可复用验证或恢复流程使用 "
+                    "sop；本次形成且经过验证的通用 Python 脚本使用 skill，并提供其真实 "
+                    "source_path。可以在一次响应中提交多个候选。如果没有值得固化的经验，"
+                    "不要勉强创建，直接重新给出最终答案。"
+                )
+                self.on_event("memory_reflection", {"reason": reflection})
+                conversation.add_feedback(response.raw_message, reflection)
+                continue
             try:
                 committed = self.tools.commit_memory(run_id=self.run_id)
             except (OSError, ValueError) as exc:
@@ -152,13 +185,38 @@ class CodingAgent:
                 ensure_ascii=False,
                 separators=(",", ":"),
             )
+            revision_counts = action_streak["revision_counts"]
+            revision_counts[signature] = revision_counts.get(signature, 0) + 1
             if action_streak["key"] == signature:
                 action_streak["count"] += 1
             else:
                 action_streak["key"] = signature
                 action_streak["count"] = 1
                 action_streak["failed_count"] = 0
+            if (
+                revision_counts[signature] >= 3
+                and call.name in OBSERVATION_TOOLS
+            ):
+                evidence_id = action_streak["revision_evidence"].get(
+                    signature, "an earlier E evidence item"
+                )
+                message = (
+                    f"未重复执行：当前 revision 中相同的 {call.name} 已有证据 "
+                    f"{evidence_id}。请通过 working checkpoint、search_context 或 "
+                    "read_context 恢复该证据，并继续实现；不要重新侦察。"
+                )
+                self.on_event(
+                    "tool_call_skipped",
+                    {"id": call.id, "name": call.name, "reason": message},
+                )
+                messages.append(
+                    {"role": "tool", "tool_call_id": call.id, "content": message}
+                )
+                recovery_feedback.append(message)
+                continue
             if action_streak["count"] >= 3:
+                return None
+            if revision_counts[signature] >= 3:
                 return None
             self.on_event(
                 "tool_call",
@@ -186,6 +244,19 @@ class CodingAgent:
             )
             if result.ok:
                 action_streak["failed_count"] = 0
+                evidence_id = result.metadata.get("evidence_id")
+                if evidence_id:
+                    action_streak["revision_evidence"][signature] = evidence_id
+                if (
+                    revision_counts[signature] == 2
+                    and call.name in OBSERVATION_TOOLS
+                ):
+                    evidence_id = result.metadata.get("evidence_id", "the earlier evidence")
+                    recovery_feedback.append(
+                        f"恢复策略：当前 revision 已第二次执行相同的 {call.name}。"
+                        f"内容没有因代码变化而更新；请使用 {evidence_id} 或 working "
+                        "checkpoint 中的已有证据，停止重复侦察并进入实现或验证。"
+                    )
             else:
                 action_streak["failed_count"] += 1
                 if action_streak["failed_count"] == 2:

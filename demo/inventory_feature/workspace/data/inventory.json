@@ -1,0 +1,6 @@
+[
+  {"sku":"KB-001","name":"无线键盘","category":"外设","stock":18,"reorder_level":5},
+  {"sku":"MS-002","name":"人体工学鼠标","category":"外设","stock":3,"reorder_level":6},
+  {"sku":"HB-003","name":"USB-C 扩展坞","category":"配件","stock":0,"reorder_level":4},
+  {"sku":"ST-004","name":"笔记本支架","category":"配件","stock":11,"reorder_level":5}
+]

@@ -1,0 +1,4 @@
+.proofcode/
+__pycache__/
+*.py[cod]
+data/demo_inventory.json

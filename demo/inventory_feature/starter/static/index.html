@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Stockroom Inventory</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <main class="shell">
+    <header><div><p class="eyebrow">OPERATIONS</p><h1>Stockroom</h1><p>库存状态与商品目录</p></div><span class="badge">本地数据</span></header>
+    <section class="panel">
+      <div class="section-title"><div><h2>库存列表</h2><p id="summary">正在加载库存…</p></div></div>
+      <div class="table-wrap"><table><thead><tr><th>SKU</th><th>商品</th><th>分类</th><th>库存</th><th>补货线</th></tr></thead><tbody id="inventory-body"></tbody></table></div>
+    </section>
+  </main>
+  <script src="app.js"></script>
+</body>
+</html>

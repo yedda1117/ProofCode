@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import sys
 import tempfile
 import unittest
@@ -45,6 +46,48 @@ class ScriptedModel:
 
 
 class CodingAgentTests(unittest.TestCase):
+    def test_verified_change_automatically_triggers_memory_consolidation(self) -> None:
+        with tempfile.TemporaryDirectory(dir=Path(__file__).parent) as directory:
+            root = Path(directory)
+            (root / "value.txt").write_text("old", encoding="utf-8")
+            (root / "test_sample.py").write_text(
+                "import unittest\n\n"
+                "class SampleTests(unittest.TestCase):\n"
+                "    def test_value_exists(self):\n"
+                "        self.assertTrue(True)\n",
+                encoding="utf-8",
+            )
+            required_command = [sys.executable, "-m", "unittest", "discover", "-v"]
+            (root / ".proofcode.json").write_text(
+                json.dumps({"validation": {"required_commands": [required_command]}}),
+                encoding="utf-8",
+            )
+            model = ScriptedModel(
+                [
+                    tool_response(
+                        "1",
+                        "replace_text",
+                        {"path": "value.txt", "old_text": "old", "new_text": "new"},
+                    ),
+                    tool_response("2", "run_command", {"argv": required_command}),
+                    final_response("Implemented and validated."),
+                    final_response("Implemented and validated; no reusable memory candidate."),
+                ]
+            )
+            events: list[str] = []
+            registry = ToolRegistry(root, approve=lambda _name, _args: True)
+
+            result = CodingAgent(
+                model=model,
+                tools=registry,
+                max_steps=4,
+                on_event=lambda kind, _data: events.append(kind),
+            ).run("Update it")
+
+            self.assertEqual(result.reason, StopReason.COMPLETED)
+            self.assertEqual(events.count("memory_reflection"), 1)
+            self.assertIn("自动经验固化阶段", str(model.seen_messages[3]))
+
     def test_changed_file_requires_project_validation_before_completion(self) -> None:
         with tempfile.TemporaryDirectory(dir=Path(__file__).parent) as directory:
             root = Path(directory)
@@ -136,7 +179,9 @@ class CodingAgentTests(unittest.TestCase):
 
     def test_stops_repeated_identical_action(self) -> None:
         with tempfile.TemporaryDirectory(dir=Path(__file__).parent) as directory:
-            response = tool_response("1", "list_files", {"path": "."})
+            response = tool_response(
+                "1", "run_command", {"argv": [sys.executable, "-c", "print('same')"]}
+            )
             model = ScriptedModel([response, response, response])
             registry = ToolRegistry(Path(directory), approve=lambda _name, _args: True)
 
@@ -144,6 +189,56 @@ class CodingAgentTests(unittest.TestCase):
 
             self.assertEqual(result.reason, StopReason.REPEATED_ACTION)
             self.assertEqual(result.steps, 3)
+
+    def test_stops_repeated_observation_cycle_without_revision_progress(self) -> None:
+        with tempfile.TemporaryDirectory(dir=Path(__file__).parent) as directory:
+            root = Path(directory)
+            (root / "a.py").write_text("a = 1\n", encoding="utf-8")
+            (root / "b.py").write_text("b = 2\n", encoding="utf-8")
+            model = ScriptedModel(
+                [
+                    tool_response("1", "read_file", {"path": "a.py"}),
+                    tool_response("2", "read_file", {"path": "b.py"}),
+                    tool_response("3", "read_file", {"path": "a.py"}),
+                    tool_response("4", "read_file", {"path": "b.py"}),
+                    tool_response("5", "read_file", {"path": "a.py"}),
+                    final_response("Inspection complete using the existing evidence."),
+                ]
+            )
+            registry = ToolRegistry(root, approve=lambda _name, _args: True)
+
+            result = CodingAgent(model=model, tools=registry, max_steps=8).run("Inspect")
+
+            self.assertEqual(result.reason, StopReason.COMPLETED)
+            self.assertEqual(result.steps, 6)
+            self.assertIn("停止重复侦察", str(model.seen_messages[4]))
+            self.assertIn("未重复执行", str(model.seen_messages[5]))
+
+    def test_repeated_context_recovery_is_skipped_without_stopping(self) -> None:
+        with tempfile.TemporaryDirectory(dir=Path(__file__).parent) as directory:
+            root = Path(directory)
+            (root / "a.py").write_text("a = 1\n", encoding="utf-8")
+            model = ScriptedModel(
+                [
+                    tool_response("1", "read_file", {"path": "a.py"}),
+                    tool_response("2", "read_context", {"id": "E0001", "max_chars": 6000}),
+                    tool_response("3", "read_context", {"id": "E0001", "max_chars": 6000}),
+                    tool_response("4", "read_context", {"id": "E0001", "max_chars": 6000}),
+                    final_response("Continued using E0001."),
+                ]
+            )
+            events: list[str] = []
+            registry = ToolRegistry(root, approve=lambda _name, _args: True)
+
+            result = CodingAgent(
+                model=model,
+                tools=registry,
+                max_steps=5,
+                on_event=lambda kind, _data: events.append(kind),
+            ).run("Inspect")
+
+            self.assertEqual(result.reason, StopReason.COMPLETED)
+            self.assertEqual(events.count("tool_call_skipped"), 1)
 
     def test_injects_hierarchical_context_into_each_model_call(self) -> None:
         with tempfile.TemporaryDirectory(dir=Path(__file__).parent) as directory:

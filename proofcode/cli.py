@@ -113,6 +113,9 @@ class Console:
                 state.append(f"验证 {validation}")
             if state:
                 print(self.style("  └ " + " · ".join(state), self.DIM))
+        elif kind == "tool_call_skipped":
+            print(self.style("↺ 已阻止重复侦察 · 使用现有证据继续", self.BOLD, self.YELLOW))
+            print(_indent(data["reason"], "  "))
         elif kind == "verification_rejected":
             print(self.style("◇ 完成门控 · 证据不足，继续执行", self.BOLD, self.YELLOW))
             print(_indent(data["reason"], "  "))
@@ -124,6 +127,8 @@ class Console:
                     self.GREEN,
                 )
             )
+        elif kind == "memory_reflection":
+            print(self.style("◇ 验证通过 · 自动检查可复用经验", self.BOLD, self.CYAN))
         elif kind == "memory_error":
             print(self.style("◇ 长期记忆写入失败", self.BOLD, self.YELLOW))
             print(_indent(data["error"], "  "))
