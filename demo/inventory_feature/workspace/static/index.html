@@ -9,9 +9,31 @@
 <body>
   <main class="shell">
     <header><div><p class="eyebrow">OPERATIONS</p><h1>Stockroom</h1><p>库存状态与商品目录</p></div><span class="badge">本地数据</span></header>
+
     <section class="panel">
-      <div class="section-title"><div><h2>库存列表</h2><p id="summary">正在加载库存…</p></div></div>
-      <div class="table-wrap"><table><thead><tr><th>SKU</th><th>商品</th><th>分类</th><th>库存</th><th>补货线</th></tr></thead><tbody id="inventory-body"></tbody></table></div>
+      <div class="section-title"><div><h2>库存风险看板</h2><p id="summary">正在加载库存…</p></div></div>
+      <div class="stats" id="stats">
+        <button class="stat stat-total" data-filter="all"><span class="stat-value" id="stat-total">–</span><span class="stat-label">全部商品</span></button>
+        <button class="stat stat-out" data-filter="out"><span class="stat-value" id="stat-out">–</span><span class="stat-label">缺货</span></button>
+        <button class="stat stat-low" data-filter="low"><span class="stat-value" id="stat-low">–</span><span class="stat-label">低库存</span></button>
+        <button class="stat stat-normal" data-filter="normal"><span class="stat-value" id="stat-normal">–</span><span class="stat-label">正常</span></button>
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="section-title"><div><h2>库存列表</h2><p id="list-summary"></p></div></div>
+      <div class="table-wrap"><table><thead><tr><th>SKU</th><th>商品</th><th>分类</th><th>库存</th><th>补货线</th><th>状态</th></tr></thead><tbody id="inventory-body"></tbody></table></div>
+    </section>
+
+    <section class="panel">
+      <div class="section-title"><div><h2>CSV 批量导入</h2><p>上传 CSV 前先预览校验，任何一行有错都不会写入。</p></div></div>
+      <div class="import-controls">
+        <input type="file" id="csv-input" accept=".csv,text/csv">
+        <button id="preview-button" type="button">预览校验</button>
+        <button id="import-button" type="button" disabled>确认导入</button>
+      </div>
+      <div id="feedback" aria-live="polite" role="status"></div>
+      <div class="table-wrap"><table><thead><tr><th>SKU</th><th>商品</th><th>分类</th><th>库存</th><th>补货线</th></tr></thead><tbody id="preview-table"></tbody></table></div>
     </section>
   </main>
   <script src="app.js"></script>

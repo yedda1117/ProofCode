@@ -5,7 +5,7 @@
 ```cmd
 set PROOFCODE_HOME=demo\inventory_feature\agent_memory
 python demo\inventory_feature\reset_demo.py
-cd /d C:\Users\ASUS\Documents\ChatGPT\agent-nku\demo\inventory_feature\workspace
+cd demo\inventory_feature\workspace
 python server.py
 ```
 
