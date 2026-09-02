@@ -4,7 +4,7 @@
   <br/>
 
   <a href="#-quick-start"><img src="https://img.shields.io/badge/Python-3.11+-3776AB?style=for-the-badge&logo=python&logoColor=white" alt="Python 3.11+" /></a>
-  <a href="#-testing--evaluation"><img src="https://img.shields.io/badge/Tests-66%20Passing-22C55E?style=for-the-badge&logo=pytest&logoColor=white" alt="66 tests passing" /></a>
+  <a href="#-testing--evaluation"><img src="https://img.shields.io/badge/Tests-70%20Passing-22C55E?style=for-the-badge&logo=pytest&logoColor=white" alt="70 tests passing" /></a>
   <a href="#-design-principles"><img src="https://img.shields.io/badge/Agent_Framework-None-8B5CF6?style=for-the-badge" alt="No agent framework" /></a>
   <a href="#-quick-start"><img src="https://img.shields.io/badge/Runtime_Dependencies-0-14B8A6?style=for-the-badge" alt="Zero runtime dependencies" /></a>
 
@@ -47,7 +47,7 @@ ProofCode 把 **模型决策** 与 **程序完成条件** 分离，并围绕两�
 
 ### 🧠 Layered context
 
-当前任务用证据关联的 Working Memory 保持连续性；跨任务经验按 GenericAgent 风格进入 **L1 索引 / L2 事实 / L3 SOP 与 Skill / L4 原始会话**，深层内容只按需读取。
+当前任务用证据关联的 Working Memory 保持连续性；跨任务经验按 GenericAgent 风格进入 **L1 索引 / L2 项目事实 / L3 全局 SOP 与 Skill / L4 原始会话**，深层内容只按需读取。
 
 </td>
 </tr>
@@ -75,10 +75,10 @@ flowchart LR
     T -->|test / build / lint| V{"Current revision verified?"}:::gate
     V -->|No| M
     V -->|Yes| D["✓ Complete"]:::done
-    D --> J["L4 · Raw Session"]:::context
+    D --> J["L4 · Project Raw Session"]:::context
     D --> C["Verified Commit"]:::gate
-    C --> K["L2 Facts · L3 SOP/Skill"]:::context
-    K --> I["L1 · Bounded Index"]:::context
+    C --> K["L2 Project Facts · L3 Global SOP/Skill"]:::context
+    K --> I["L1 · Project + Global Index"]:::context
     I -. next task .-> M
 ```
 
@@ -94,7 +94,7 @@ flowchart LR
 |:--:|---|---|
 | 🔁 | **Native Agent Loop** | 直接解析 OpenAI-compatible Chat Completions API 的原生 tool calls，并将结构化结果反馈给模型 |
 | 🧠 | **Working Memory** | Agent 主动维护关键发现、约束、假设、进度与下一步；每条结论绑定 E 证据，并随依赖文件变化失效 |
-| 🌱 | **Verified Self-Evolution** | 完成后才把有证据的稳定事实、SOP 或已验证 Python Skill 固化到跨任务 L1/L2/L3 |
+| 🌱 | **Verified Self-Evolution** | 完成后才把有证据的稳定事实固化到项目 L2，把 SOP 或已验证 Python Skill 固化到可跨工作区复用的全局 L3 |
 | 🧭 | **Routed Evidence** | 常驻上下文只保留运行状态、工作检查点和紧凑路由；历史或截断证据可检索 C/E 指针后按需恢复 |
 | 🧬 | **Revision Awareness** | 成功编辑或命令引起的可观测文件变化推进 revision，旧命令与验证自动标记 stale |
 | ✅ | **Validation Policy** | 自动给出常见项目验证建议；项目可用 `.proofcode.json` 固定由 Runtime 强制要求的 baseline |
@@ -143,6 +143,8 @@ flowchart LR
 $env:MODEL_API_KEY="your-api-key"
 $env:MODEL_BASE_URL="https://your-provider.example/v1"
 $env:MODEL_NAME="your-model-name"
+# 可选：全局 SOP / Skill 的保存位置；默认是 ~/.proofcode
+$env:PROOFCODE_HOME="D:\proofcode-home"
 ```
 
 </details>
@@ -154,6 +156,8 @@ $env:MODEL_NAME="your-model-name"
 set "MODEL_API_KEY=your-api-key"
 set "MODEL_BASE_URL=https://your-provider.example/v1"
 set "MODEL_NAME=your-model-name"
+rem 可选：全局 SOP / Skill 的保存位置；默认是 %USERPROFILE%\.proofcode
+set "PROOFCODE_HOME=D:\proofcode-home"
 ```
 
 </details>
@@ -191,11 +195,11 @@ Current task Working Memory (always on)
   recent full exchanges + C/E session evidence routes
 
 Cross-task Long-Term Memory
-  L1 INDEX      bounded pointers, always on
+  L1 INDEX      merged project + global bounded pointers, always on
       ↓ on-demand routing
-  L2 FACTS      verified stable project facts
-  L3 SOP/SKILL  reusable workflows / validated Python files
-  L4 SESSIONS   complete JSONL trajectories and raw tool results
+  L2 FACTS      project-local verified facts (.proofcode/memory)
+  L3 SOP/SKILL  reusable global workflows / Python files ($PROOFCODE_HOME/memory)
+  L4 SESSIONS   project-local JSONL trajectories and raw tool results
 ```
 
 Working Memory 负责**当前任务连续性**，不冒充长期事实库。Agent 在关键发现、修改或验证反馈发生后调用 `update_working_memory`，提交 `finding / constraint / hypothesis / progress / risk`；Runtime 要求每项引用真实且当前有效的 E 证据，并根据证据推导依赖文件。文件改变后，相关条目 stale，不再进入活跃检查点。
@@ -204,7 +208,9 @@ Runtime 校验的是 **provenance**：结论来自哪次真实读取或执行；
 
 每轮输入由两条互补通道组成：近期完整 tool exchange 保留局部操作连续性，Working Memory anchor 保留跨越裁剪边界的全局任务状态。检查点最多 16 条、每条最多 360 字符；出现新证据后显示 `needs_refresh`。
 
-较早的当前任务证据通过 `search_context → read_context` 恢复；跨任务知识只常驻最多 27 行的 L1 路由，具体 L2/L3 内容通过 `read_memory` 按需读取。
+较早的当前任务证据通过 `search_context → read_context` 恢复；跨任务知识只常驻最多 27 行的 L1 路由，具体 L2/L3 内容通过 `read_memory` 按需读取。L1 会合并项目索引与全局索引，并用 `project:F0001`、`global:S0001`、`global:K0001` 这类带 scope 的 ID 消除歧义；未带 scope 的旧式 ID 仍可读取。
+
+存储范围是有意分开的：依赖具体仓库结构和约定的 Fact 保存在 `<workspace>/.proofcode/memory/l2_facts/`；可迁移的 SOP 与经过验证的 Python Skill 保存在 `$PROOFCODE_HOME/memory/l3_sops/` 和 `l3_skills/`，默认 `PROOFCODE_HOME` 为用户目录下的 `.proofcode`。因此，同一 agent home 下的新工作区可以通过全局 L1 索引发现并按需读取已验证流程，而不会把另一个项目的事实误当作当前项目事实。
 
 ## 🌱 Verified Self-Evolution
 
@@ -215,16 +221,16 @@ propose_memory (candidate only)
         ↓
 completion gate passes
         ↓ Runtime admission
-L2 Fact / L3 SOP / L3 Python Skill
+L2 Project Fact / L3 Global SOP / L3 Global Python Skill
         ↓
-L1 index updated atomically
+project/global L1 indexes updated atomically
         ↓
 next run retrieves it on demand
 ```
 
 这不是“任务结束就自动总结”。Fact 必须引用成功且未过期的 E 证据；SOP 与 Skill 还必须引用当前 project-wide validation。Skill 不能由模型在参数中凭空生成，只能复制真实工作区中经过验证的 Python 文件，未来执行仍调用 `run_command` 并经过正常人工确认。候选只在 completion gate 通过后提交；同标题的新版本通过 `supersedes` 替代活跃指针，旧文件继续保留用于审计。
 
-L4 默认 JSONL 轨迹保存完整 raw tool result，并用 `run_id` 与固化条目的 provenance 关联。L1 只保存 ID、类别、标题和关键词；L2/L3 扩张不会线性进入 prompt。这对应 GenericAgent 的 triggered commit、minimum sufficient pointer 和 “No Execution, No Memory”。
+L4 默认 JSONL 轨迹保存完整 raw tool result，并用 `run_id` 与固化条目的 provenance 关联。提交时，Fact 进入项目索引，SOP/Skill 进入全局索引；每个条目还记录来源工作区。L1 只保存 scope、ID、类别、标题和关键词；L2/L3 扩张不会线性进入 prompt。这对应 GenericAgent 的 triggered commit、minimum sufficient pointer 和 “No Execution, No Memory”。
 
 当文件发生修改后，与旧内容相关的读取、搜索、命令和验证条目会被标记为 `stale`。`run_command` 前后也会比较工作区文件元数据，以捕获格式化器、生成器等命令带来的变化。模型仍可审计历史证据，但不能把旧版本的成功测试当成当前版本的完成依据。当前采用 workspace-level 保守失效：即使只修改 README，也会使旧验证失效。
 
@@ -299,11 +305,11 @@ python -m unittest discover -v
 ```
 
 ```text
-Ran 66 tests
+Ran 70 tests
 OK
 ```
 
-当前测试覆盖：模型协议解析、路径隔离、工具参数、补丁匹配、差异审查、上下文检索与恢复、版本失效、验证反馈、循环终止、轨迹写入、长期记忆准入与跨运行召回。
+当前测试覆盖：模型协议解析、路径隔离、工具参数、补丁匹配、差异审查、上下文检索与恢复、版本失效、验证反馈、循环终止、轨迹写入、长期记忆准入、项目/全局 scope 隔离与跨工作区召回。
 
 分层上下文回放：
 
@@ -311,10 +317,10 @@ OK
 python -m evaluation.context_replay
 ```
 
-当前受控回放包含 **18 轮**长工具输出。以序列化字符数作为上下文开销代理，路由式上下文相对完整线性历史减少约 **71.8%**，同时能够恢复全部原始证据。
+当前受控回放包含 **18 轮**长工具输出。以序列化字符数作为上下文开销代理，路由式上下文相对完整线性历史减少约 **72.6%**，同时能够恢复全部原始证据。
 
 > [!IMPORTANT]
-> `71.8%` 是当前受控回放用于验证机制的结果，不代表所有真实任务、模型或 tokenizer 上固定的 token 节省比例。
+> `72.6%` 是当前受控回放用于验证机制的结果，不代表所有真实任务、模型或 tokenizer 上固定的 token 节省比例。
 
 机制对照场景：
 
@@ -332,7 +338,7 @@ proofcode/
 ├── cli.py            # CLI、批准流程与事件展示
 ├── config.py         # 环境变量配置
 ├── context.py        # 对话交换与近期历史裁剪
-├── memory.py         # L1/L2/L3 持久化、检索与版本提交
+├── memory.py         # 项目/全局 L1-L3 持久化、检索与版本提交
 ├── model.py          # OpenAI-compatible 请求与响应解析
 ├── patching.py       # 受限 unified-diff 解析
 ├── project.py        # 项目验证策略与常见 baseline 建议
@@ -347,7 +353,7 @@ evaluation/           # 上下文成本回放与动态路由/版本门控场景
 demo/                 # 可重复录制的人工确认、三层上下文与验证门控案例
 ```
 
-`demo/` 保留单文件快速演示；`demo/multifile/` 提供更适合最终视频的 Bearer 鉴权任务，通过解析器与 middleware 的调用关系展示 focused feedback、多文件影响、revision 失效和最终项目级验证。
+`demo/` 保留单文件快速演示；`demo/multifile/` 用 Bearer 鉴权任务展示 focused feedback 与多文件影响；`demo/todo_feature/` 展示从需求实现到保存、跨项目召回 Python Skill 的完整链路；`demo/inventory_feature/` 则提供包含后端、前端、持久化、审计脚本与多层测试的综合演示。
 
 ## ◆ Design Principles
 
@@ -356,7 +362,7 @@ demo/                 # 可重复录制的人工确认、三层上下文与验�
 3. **Preserve decisions and provenance, not prompt bloat.** 常驻的是证据关联的关键认识，原始输出按需恢复。
 4. **Repair with execution feedback.** 失败测试既进入下一轮，也可沉淀为当前 working checkpoint 中有来源的假设、风险和下一步。
 5. **Evolve knowledge, not the tool layer.** 工具接口保持固定；只有通过完成门控的事实、SOP 和已验证脚本可以跨任务积累。
-6. **Stay small.** 当前保持同步单 Agent 循环，不引入多智能体、插件或向量数据库。
+6. **Stay small.** 当前保持同步单 Agent 循环，不引入多智能体、插件或向量数据库；跨项目能力来自文件化全局 SOP/Skill 与紧凑索引。
 
 ## 🔐 Security Boundary
 
@@ -374,7 +380,7 @@ ProofCode 限制所有工具路径不能逃逸工作区；命令使用 argv 数�
 - **CodePlan** — repository oracle 将验证诊断转化为下一轮修改并控制终止 · [Paper](https://arxiv.org/abs/2309.12499)
 - **Agentless** — 软件问题定位、修复与验证的阶段化思路 · [Paper](https://arxiv.org/abs/2407.01489)
 
-ProofCode 没有复制上述项目的 Agent 实现，也不宣称具有 GenericAgent 的全部通用能力。它面向 Coding Agent 实现了 working-memory anchor、L1→L2/L3 按需路由、L4 会话归档与验证后经验固化；仍未实现自动调度反思、跨项目全局记忆或 CodePlan 的依赖图。
+ProofCode 没有复制上述项目的 Agent 实现，也不宣称具有 GenericAgent 的全部通用能力。它面向 Coding Agent 实现了 working-memory anchor、项目/全局 L1→L2/L3 按需路由、L4 会话归档与验证后经验固化；当前全局记忆只接纳可迁移的 SOP 与 Skill，仍未实现自动调度反思、跨项目事实共享或 CodePlan 的依赖图。
 
 <br/>
 
